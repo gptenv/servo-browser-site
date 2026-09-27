@@ -91,11 +91,44 @@ async function pumpBriefly(runtime, ms = 250) {
   });
 }
 
-async function pageSummary(runtime, maxDurationMs = 2_000) {
-  const result = await runtime.evaluate(
-    `JSON.stringify({url:location.href,title:document.title,readyState:document.readyState,navigationId:performance.timeOrigin,text:(document.body?.innerText||'').slice(0,20000)})`,
-    { maxDurationMs },
-  );
+async function pageSummary(runtime, maxDurationMs = 5_000) {
+  const result = await runtime.evaluate(`(() => {
+    const body = document.body;
+    const textParts = [];
+    let textLength = 0;
+    try {
+      const walker = body && document.createTreeWalker(body, 4);
+      let node;
+      let visited = 0;
+      while (walker && (node = walker.nextNode()) && visited < 2_000 && textLength < 12_000) {
+        visited += 1;
+        let parent = node.parentElement;
+        let ignored = false;
+        while (parent && parent !== body) {
+          const tag = parent.tagName;
+          if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'SVG') {
+            ignored = true;
+            break;
+          }
+          parent = parent.parentElement;
+        }
+        if (ignored || typeof node.nodeValue !== 'string') continue;
+        const remaining = 12_000 - textLength;
+        const text = node.nodeValue.slice(0, remaining).trim();
+        if (text) {
+          textParts.push(text);
+          textLength += text.length + 1;
+        }
+      }
+    } catch { /* Keep URL/title inspection available if text traversal is unsupported. */ }
+    return JSON.stringify({
+      url: location.href,
+      title: document.title,
+      readyState: document.readyState,
+      navigationId: performance.timeOrigin,
+      text: textParts.join(' ').slice(0, 12_000),
+    });
+  })()`, { maxDurationMs });
   if (result?.Err) throw new Error(`Servo page inspection failed: ${result.Err}`);
   const page = parsePageResult(result);
   if (!page || typeof page !== 'object' || typeof page.url !== 'string') throw new Error('Servo returned an invalid page summary.');
