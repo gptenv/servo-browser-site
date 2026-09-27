@@ -127,16 +127,30 @@ export function createServoMediaHost({ emit = () => {} } = {}) {
   const decodeVideoSample = async (sample) => {
     const frame = sample.toVideoFrame();
     try {
-      const width = frame.codedWidth;
-      const height = frame.codedHeight;
-      if (!width || !height || width > 8192 || height > 8192) {
+      const codedWidth = frame.codedWidth;
+      const codedHeight = frame.codedHeight;
+      if (!codedWidth || !codedHeight || codedWidth > 8192 || codedHeight > 8192) {
         throw new RangeError('Decoded video frame dimensions are outside the supported range.');
       }
-      const pixels = new Uint8Array(frame.allocationSize({ format: 'BGRA' }));
-      if (pixels.byteLength !== width * height * 4 || pixels.byteLength > MAX_VIDEO_FRAME_BYTES) {
+      const codedBytes = codedWidth * codedHeight * 4;
+      const visibleRect = frame.visibleRect ?? { x: 0, y: 0, width: codedWidth, height: codedHeight };
+      const width = visibleRect.width;
+      const height = visibleRect.height;
+      const rowBytes = width * 4;
+      const byteLength = rowBytes * height;
+      if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0 ||
+          codedBytes > MAX_VIDEO_FRAME_BYTES || byteLength > MAX_VIDEO_FRAME_BYTES) {
         throw new RangeError('Decoded video frame exceeds the safe frame buffer limit.');
       }
-      await frame.copyTo(pixels, { format: 'BGRA' });
+      // VideoFrame allocationSize may include row padding chosen by the
+      // implementation. Servo's renderer consumes tightly packed BGRA, so
+      // request an explicit packed plane layout instead of assuming the
+      // default allocation is width * height * 4 bytes.
+      const pixels = new Uint8Array(byteLength);
+      await frame.copyTo(pixels, {
+        format: 'BGRA',
+        layout: [{ offset: 0, stride: rowBytes }],
+      });
       return { width, height, pixels };
     } finally {
       frame.close();
