@@ -3,10 +3,11 @@ const MAX_UPSTREAM_BODY_BYTES = 8 * 1024 * 1024;
 const MAX_REQUEST_HEADER_BYTES = 8 * 1024;
 const MAX_UPSTREAM_METADATA_BYTES = 256 * 1024;
 const UPSTREAM_TIMEOUT_MS = 15_000;
-const RATE_WINDOW_MS = 60_000;
-const MAX_REQUESTS_PER_WINDOW = 240;
+const RATE_BURST_CAPACITY = 2_400;
+const RATE_REFILL_PER_MS = 2_400 / 60_000;
+const MAX_TRACKED_RATE_KEYS = 4_096;
 const SERVO_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36 ServoBrowser/0.1 (+https://servo-browser.defcron.chatgpt.site)";
-const rates = new Map<string, number[]>();
+const rates = new Map<string, { tokens: number; updatedAt: number }>();
 
 type ProxyRequest = {
   url?: unknown;
@@ -59,14 +60,22 @@ function parseTarget(value: unknown): URL {
 function takeRateLimit(request: Request): boolean {
   const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
   const now = Date.now();
-  const recent = (rates.get(ip) ?? []).filter((time) => now - time < RATE_WINDOW_MS);
-  if (recent.length >= MAX_REQUESTS_PER_WINDOW) return false;
-  recent.push(now);
-  rates.set(ip, recent);
-  if (rates.size > 4096) {
-    for (const [key, values] of rates) {
-      if (values.every((time) => now - time >= RATE_WINDOW_MS)) rates.delete(key);
+  const previous = rates.get(ip) ?? { tokens: RATE_BURST_CAPACITY, updatedAt: now };
+  const elapsed = Math.max(0, now - previous.updatedAt);
+  const available = Math.min(
+    RATE_BURST_CAPACITY,
+    previous.tokens + elapsed * RATE_REFILL_PER_MS,
+  );
+  if (available < 1) return false;
+  rates.set(ip, { tokens: available - 1, updatedAt: now });
+  if (rates.size > MAX_TRACKED_RATE_KEYS) {
+    for (const [key, state] of rates) {
+      if (now - state.updatedAt >= 60_000) rates.delete(key);
     }
+  }
+  if (rates.size > MAX_TRACKED_RATE_KEYS) {
+    const oldest = rates.keys().next().value;
+    if (oldest !== undefined) rates.delete(oldest);
   }
   return true;
 }
@@ -132,7 +141,7 @@ function reply(status: number, message: string): Response {
 export async function POST(request: Request): Promise<Response> {
   const origin = request.headers.get("origin");
   if (origin !== new URL(request.url).origin) return reply(403, "Same-origin Servo requests only.");
-  if (!takeRateLimit(request)) return reply(429, "Servo network request limit reached; wait one minute and try again.");
+  if (!takeRateLimit(request)) return reply(429, "Servo network request rate limit reached; retry shortly.");
   const declaredSize = Number(request.headers.get("content-length"));
   if (Number.isFinite(declaredSize) && declaredSize > MAX_PROXY_REQUEST_BYTES) {
     return reply(413, "Servo proxy request is too large.");

@@ -11,9 +11,10 @@ const MAX_RESPONSE_HEADERS_BYTES = 256 * 1024;
 const RESPONSE_CHUNK_BYTES = 64 * 1024;
 const MAX_REDIRECTS = 10;
 const MAX_OUTGOING_CONNECTIONS = 6;
-const MAX_PENDING_FETCHES = 50;
+const MAX_PENDING_FETCHES = 4_096;
+const MAX_PENDING_FETCH_BYTES = 8 * 1024 * 1024;
+const MAX_PENDING_WEBSOCKETS = 50;
 const MAX_HOST_MESSAGE_BYTES = 2 * 1024 * 1024;
-const FREE_TIER_SUBREQUESTS = 50;
 const DEFAULT_SESSION_SUBREQUESTS = 10_000;
 const WORKER_ABI_VERSION = 8;
 // Interpreter work units (loop iterations weighted by body size, calls,
@@ -210,7 +211,7 @@ export async function createServoWorkerRuntime(wasmModule, {
   url = "about:blank",
   log = console.error,
   maxResponseBytes = MAX_RESPONSE_BYTES,
-  maxSubrequests = FREE_TIER_SUBREQUESTS,
+  maxSubrequests = DEFAULT_SESSION_SUBREQUESTS,
   maxSessionSubrequests = DEFAULT_SESSION_SUBREQUESTS,
   scriptBudget = DEFAULT_SCRIPT_BUDGET,
 } = {}) {
@@ -252,7 +253,7 @@ export async function createServoWorkerRuntime(wasmModule, {
       worker_fetch_request: (ptr, len) => {
         const bytes = new Uint8Array(runtime.instance.exports.memory.buffer, ptr, len);
         const message = parseWorkerHostMessage(bytes);
-        if (message.kind === 'fetch') runtime.dispatchFetch(message.request);
+        if (message.kind === 'fetch') runtime.dispatchFetch(message.request, len);
         else if (message.kind === 'cancel') runtime.cancelFetches(message.request_ids);
         else if (message.kind === 'web_socket_connect') runtime.connectWebSocket(message);
         else if (message.kind === 'web_socket_action') runtime.webSocketAction(message);
@@ -305,6 +306,7 @@ class ServoWorkerRuntime {
   #fetchControllers = new Map();
   #responseStartedFetches = new Set();
   #fetchQueue = [];
+  #fetchQueueBytes = 0;
   #webSockets = new Map();
   #generation = 0;
   #inlinePage = null;
@@ -667,23 +669,32 @@ class ServoWorkerRuntime {
     }
   }
 
-  dispatchFetch(request) {
+  dispatchFetch(request, requestBytes = encoder.encode(JSON.stringify(request)).byteLength) {
     if (this.#fetchQueue.length + this.#inFlightFetches.size >= MAX_PENDING_FETCHES) {
-      this.#deliverError(request.id, 'Too many pending Worker fetches', false);
+      this.#deliverError(request.id, 'The Servo Worker fetch queue is full', false);
       return;
     }
-    this.#fetchQueue.push(request);
+    if (this.#fetchQueueBytes + requestBytes > MAX_PENDING_FETCH_BYTES) {
+      this.#deliverError(request.id, 'The Servo Worker fetch queue byte budget is full', false);
+      return;
+    }
+    this.#fetchQueue.push({ request, bytes: requestBytes });
+    this.#fetchQueueBytes += requestBytes;
     this.#drainFetchQueue();
   }
 
   cancelFetches(requestIds) {
     const canceled = new Set(requestIds);
-    this.#fetchQueue = this.#fetchQueue.filter((request) => !canceled.has(request.id));
+    this.#fetchQueue = this.#fetchQueue.filter(({ request, bytes }) => {
+      if (!canceled.has(request.id)) return true;
+      this.#fetchQueueBytes -= bytes;
+      return false;
+    });
     for (const id of canceled) this.#fetchControllers.get(id)?.abort();
   }
 
   connectWebSocket({ request_id: id, url, protocols = [] }) {
-    if (this.#webSockets.size >= MAX_PENDING_FETCHES) {
+    if (this.#webSockets.size >= MAX_PENDING_WEBSOCKETS) {
       this.#deliverWebSocketClose(id, 0xffffffff, '', true);
       return;
     }
@@ -788,7 +799,9 @@ class ServoWorkerRuntime {
 
   #drainFetchQueue() {
     while (this.#inFlightFetches.size < MAX_OUTGOING_CONNECTIONS && this.#fetchQueue.length) {
-      this.#startFetch(this.#fetchQueue.shift());
+      const queued = this.#fetchQueue.shift();
+      this.#fetchQueueBytes -= queued.bytes;
+      this.#startFetch(queued.request);
     }
   }
 
@@ -834,10 +847,11 @@ class ServoWorkerRuntime {
 
   #cancelFetchesForNavigation() {
     const requests = new Map([
-      ...this.#fetchQueue.map((request) => [request.id, request]),
+      ...this.#fetchQueue.map(({ request }) => [request.id, request]),
       ...[...this.#fetchControllers.keys()].map((id) => [id, null]),
     ]);
     this.#fetchQueue = [];
+    this.#fetchQueueBytes = 0;
     for (const id of requests.keys()) {
       this.#fetchControllers.get(id)?.abort();
       this.#deliverError(id, 'Canceled by top-level navigation',
@@ -1216,6 +1230,7 @@ class ServoWorkerRuntime {
     this.#fetchControllers.clear();
     this.#inFlightFetches.clear();
     this.#fetchQueue.length = 0;
+    this.#fetchQueueBytes = 0;
     this.#closeWebSockets();
     this.#inlinePage = null;
     this.#notifyActivity();

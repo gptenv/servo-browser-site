@@ -1,4 +1,4 @@
-import { createServoWorkerRuntime } from './worker-adapter.mjs';
+import { createServoWorkerRuntime } from './worker-adapter.ee748ab914a005dac25d68aa514b95ed1f742e47ceecbb75995dd202624b84de.mjs';
 
 const MAX_SESSIONS = 3;
 const MAX_DURATION = 15_000;
@@ -130,12 +130,10 @@ async function createSession(options = {}) {
   if (options.html !== undefined && new TextEncoder().encode(options.html).byteLength > MAX_HTML_BYTES) throw new RangeError('Inline HTML exceeds 1 MiB.');
   const width = Math.max(320, Math.min(1920, Math.trunc(options.width ?? 1280)));
   const height = Math.max(240, Math.min(1600, Math.trunc(options.height ?? 720)));
-  let sessionFetches = 0;
   const runtime = await createServoWorkerRuntime(await compileWasm(), {
-    width, height, maxResponseBytes: 8 * 1024 * 1024, maxSubrequests: 50,
+    width, height, maxResponseBytes: 8 * 1024 * 1024, maxSubrequests: 10_000,
     fetchImpl: async (input, init = {}) => {
       const url = assertPublicUrl(input instanceof Request ? input.url : String(input));
-      if (++sessionFetches > 50) throw new Error('This page has reached the 50-request browser-session limit.');
       const source = input instanceof Request ? input : null;
       const method = String(init.method ?? source?.method ?? 'GET').toUpperCase();
       const requestHeaders = new Headers(init.headers ?? source?.headers);
