@@ -33,7 +33,7 @@ The build writes generated output to `dist/`, which is ignored by Git. `npm star
 ## How it works
 
 1. `public/browser.html` provides navigation, rendered-page input, scrolling, fullscreen, inspection, and session controls.
-2. `public/engine-worker.js` creates isolated Servo sessions in a Web Worker and registers their native WebMCP tools.
+2. The digest-named `public/engine-worker.<sha256>.js` creates isolated Servo sessions in a Web Worker and registers their native WebMCP tools.
 3. `public/worker-adapter.mjs` supplies the Worker interfaces expected by Servo WASM, including fetch, redirects, cookies, WebSockets, and browser input.
 4. `app/api/servo-fetch/route.ts` performs bounded server-side fetches for the WASM engine. It filters ambient credentials, restricts targets to public HTTP(S), limits request rates and body sizes, and carries normalized response metadata in a length-prefixed body envelope. Response metadata is capped at 256 KiB to bound header-stuffing abuse.
 
