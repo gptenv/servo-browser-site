@@ -1,8 +1,10 @@
 const MAX_PROXY_REQUEST_BYTES = 1024 * 1024;
-const MAX_UPSTREAM_BODY_BYTES = 8 * 1024 * 1024;
+const MAX_UPSTREAM_BODY_BYTES = 512 * 1024 * 1024;
 const MAX_REQUEST_HEADER_BYTES = 8 * 1024;
 const MAX_UPSTREAM_METADATA_BYTES = 256 * 1024;
-const UPSTREAM_TIMEOUT_MS = 15_000;
+const UPSTREAM_HEADERS_TIMEOUT_MS = 15_000;
+const UPSTREAM_IDLE_TIMEOUT_MS = 30_000;
+const UPSTREAM_MAX_DURATION_MS = 15 * 60_000;
 const RATE_BURST_CAPACITY = 2_400;
 const RATE_REFILL_PER_MS = 2_400 / 60_000;
 const MAX_TRACKED_RATE_KEYS = 4_096;
@@ -90,45 +92,103 @@ function decodeBody(encoded: unknown): Uint8Array | undefined {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
-async function readBounded(response: Response): Promise<Uint8Array> {
-  const declared = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_UPSTREAM_BODY_BYTES) {
-    await response.body?.cancel();
-    throw new RangeError("The remote response exceeds 8 MiB.");
-  }
-  if (!response.body) return new Uint8Array();
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > MAX_UPSTREAM_BODY_BYTES) {
-        await reader.cancel();
-        throw new RangeError("The remote response exceeds 8 MiB.");
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const body = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    body.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return body;
-}
-
-function frameResponse(metadata: Uint8Array, body: Uint8Array): Uint8Array {
-  const framed = new Uint8Array(4 + metadata.byteLength + body.byteLength);
+function frameMetadata(metadata: Uint8Array): Uint8Array {
+  const framed = new Uint8Array(4 + metadata.byteLength);
   new DataView(framed.buffer).setUint32(0, metadata.byteLength, false);
   framed.set(metadata, 4);
-  framed.set(body, 4 + metadata.byteLength);
   return framed;
+}
+
+function streamFramedResponse(
+  metadata: Uint8Array,
+  upstreamBody: ReadableStream<Uint8Array> | null,
+  upstreamController: AbortController,
+  requestSignal: AbortSignal,
+): ReadableStream<Uint8Array> {
+  const prefix = frameMetadata(metadata);
+  const reader = upstreamBody?.getReader() ?? null;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let durationTimer: ReturnType<typeof setTimeout> | undefined;
+  let received = 0;
+  let cleanedUp = false;
+  let canceled = false;
+
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    if (idleTimer) clearTimeout(idleTimer);
+    if (durationTimer) clearTimeout(durationTimer);
+    requestSignal.removeEventListener("abort", abortForClient);
+    upstreamController.signal.removeEventListener("abort", cancelUpstreamReader);
+    try { reader?.releaseLock(); } catch { /* A canceled reader may already be released. */ }
+  };
+  const abortUpstream = (reason: unknown) => {
+    if (!upstreamController.signal.aborted) upstreamController.abort(reason);
+  };
+  const abortForClient = () => abortUpstream(requestSignal.reason ?? new Error("The client disconnected."));
+  const cancelUpstreamReader = () => {
+    if (reader) void reader.cancel(upstreamController.signal.reason).catch(() => {});
+  };
+  const abortError = () => {
+    const reason = upstreamController.signal.reason;
+    return reason instanceof Error ? reason : new Error(String(reason ?? "The upstream request was aborted."));
+  };
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(prefix);
+      if (!reader) {
+        controller.close();
+        cleanup();
+        return;
+      }
+      requestSignal.addEventListener("abort", abortForClient, { once: true });
+      upstreamController.signal.addEventListener("abort", cancelUpstreamReader, { once: true });
+      if (requestSignal.aborted) {
+        abortForClient();
+        controller.error(abortError());
+        cleanup();
+        return;
+      }
+      durationTimer = setTimeout(() => {
+        abortUpstream(new Error("The remote response exceeded the 15-minute transfer limit."));
+      }, UPSTREAM_MAX_DURATION_MS);
+    },
+    async pull(controller) {
+      if (!reader || canceled) return;
+      idleTimer = setTimeout(() => {
+        abortUpstream(new Error("The remote response was idle for more than 30 seconds."));
+      }, UPSTREAM_IDLE_TIMEOUT_MS);
+      try {
+        const { done, value } = await reader.read();
+        if (canceled) return;
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = undefined;
+        if (upstreamController.signal.aborted) throw abortError();
+        if (done) {
+          controller.close();
+          cleanup();
+          return;
+        }
+        received += value.byteLength;
+        if (received > MAX_UPSTREAM_BODY_BYTES) {
+          throw new RangeError("The remote response exceeds 512 MiB.");
+        }
+        controller.enqueue(value);
+      } catch (error) {
+        if (canceled) return;
+        abortUpstream(error);
+        cleanup();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      canceled = true;
+      abortUpstream(reason ?? new Error("The client canceled the response."));
+      try { await reader?.cancel(reason); } catch { /* The stream is already canceled. */ }
+      cleanup();
+    },
+  });
 }
 
 function reply(status: number, message: string): Response {
@@ -231,7 +291,7 @@ export async function POST(request: Request): Promise<Response> {
       ],
       setCookies: [],
     }));
-    return new Response(frameResponse(metadataBytes, new Uint8Array()), {
+    return new Response(frameMetadata(metadataBytes), {
       headers: {
         "cache-control": "no-store",
         "content-type": "application/octet-stream",
@@ -241,7 +301,10 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort("Servo upstream timed out"), UPSTREAM_TIMEOUT_MS);
+  let headersTimeout: ReturnType<typeof setTimeout> | undefined = setTimeout(
+    () => controller.abort("Servo upstream response headers timed out"),
+    UPSTREAM_HEADERS_TIMEOUT_MS,
+  );
   const cancel = () => controller.abort(request.signal.reason);
   request.signal.addEventListener("abort", cancel, { once: true });
   try {
@@ -252,6 +315,13 @@ export async function POST(request: Request): Promise<Response> {
       redirect: "manual",
       signal: controller.signal,
     });
+    if (headersTimeout) clearTimeout(headersTimeout);
+    headersTimeout = undefined;
+    const declaredLength = Number(upstream.headers.get("content-length"));
+    if (method !== "HEAD" && Number.isFinite(declaredLength) && declaredLength > MAX_UPSTREAM_BODY_BYTES) {
+      await upstream.body?.cancel();
+      return reply(502, "The remote response exceeds 512 MiB.");
+    }
     const requestedHeaders = originalHeader("access-control-request-headers");
     const corsHeaders = [
       ["access-control-allow-origin", "*"],
@@ -274,8 +344,13 @@ export async function POST(request: Request): Promise<Response> {
       await upstream.body?.cancel();
       return reply(502, "The remote response metadata exceeds 256 KiB.");
     }
-    const responseBody = method === "HEAD" ? new Uint8Array() : await readBounded(upstream);
-    return new Response(frameResponse(metadataBytes, responseBody), {
+    if (method === "HEAD") await upstream.body?.cancel();
+    return new Response(streamFramedResponse(
+      metadataBytes,
+      method === "HEAD" ? null : upstream.body,
+      controller,
+      request.signal,
+    ), {
       headers: {
         "cache-control": "no-store",
         "content-type": "application/octet-stream",
@@ -290,7 +365,7 @@ export async function POST(request: Request): Promise<Response> {
         : "The remote site could not be fetched.";
     return reply(controller.signal.aborted ? 504 : 502, message);
   } finally {
-    clearTimeout(timeout);
+    if (headersTimeout) clearTimeout(headersTimeout);
     request.signal.removeEventListener("abort", cancel);
   }
 }

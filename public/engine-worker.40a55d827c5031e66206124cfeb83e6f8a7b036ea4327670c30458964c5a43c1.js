@@ -1,4 +1,4 @@
-import { createServoWorkerRuntime } from './worker-adapter.ee748ab914a005dac25d68aa514b95ed1f742e47ceecbb75995dd202624b84de.mjs';
+import { createServoWorkerRuntime } from './worker-adapter.70a81790faa3b9c8b95a518ab24b34eb487b830cd32fec0c784ca286723ad6d2.mjs';
 
 const MAX_SESSIONS = 3;
 const MAX_DURATION = 15_000;
@@ -131,7 +131,7 @@ async function createSession(options = {}) {
   const width = Math.max(320, Math.min(1920, Math.trunc(options.width ?? 1280)));
   const height = Math.max(240, Math.min(1600, Math.trunc(options.height ?? 720)));
   const runtime = await createServoWorkerRuntime(await compileWasm(), {
-    width, height, maxResponseBytes: 8 * 1024 * 1024, maxSubrequests: 10_000,
+    width, height, maxResponseBytes: 512 * 1024 * 1024, maxSubrequests: 10_000,
     fetchImpl: async (input, init = {}) => {
       const url = assertPublicUrl(input instanceof Request ? input.url : String(input));
       const source = input instanceof Request ? input : null;

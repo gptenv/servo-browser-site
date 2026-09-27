@@ -6,7 +6,7 @@
  * are fulfilled by the Worker's standard fetch() implementation.
  */
 
-const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const MAX_RESPONSE_BYTES = 512 * 1024 * 1024;
 const MAX_RESPONSE_HEADERS_BYTES = 256 * 1024;
 const RESPONSE_CHUNK_BYTES = 64 * 1024;
 const MAX_REDIRECTS = 10;
@@ -216,8 +216,8 @@ export async function createServoWorkerRuntime(wasmModule, {
   scriptBudget = DEFAULT_SCRIPT_BUDGET,
 } = {}) {
   if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 0 ||
-      maxResponseBytes > 64 * 1024 * 1024) {
-    throw new RangeError('maxResponseBytes must be between 0 and 64 MiB');
+      maxResponseBytes > 512 * 1024 * 1024) {
+    throw new RangeError('maxResponseBytes must be between 0 and 512 MiB');
   }
   if (!Number.isSafeInteger(maxSubrequests) || maxSubrequests < 1) {
     throw new RangeError('maxSubrequests must be a positive integer');
