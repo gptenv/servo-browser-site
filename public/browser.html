@@ -45,6 +45,7 @@
     let mediaCaptureTimer = null;
     let captureBusy = false;
     const mediaStates = new Map();
+    const prerollCaptures = new Set();
     const audioSources = new Map();
     const toolNames = ['servo_session_create','servo_session_status','servo_session_close','servo_navigate','servo_reload','servo_history','servo_inspect','servo_wait','servo_evaluate','servo_click','servo_type_text','servo_press_key','servo_scroll','servo_screenshot','servo_get_capabilities','servo_register_font'];
     const setStatus = (message, error = false) => { $('#status').textContent = message; $('#status').classList.toggle('error', error); };
@@ -106,6 +107,7 @@
         if (state.sessionId === sessionId) {
           stopAudioPlayer(sessionId, state.playerId);
           mediaStates.delete(key);
+          prerollCaptures.delete(key);
         }
       }
       stopMediaCaptureIfIdle();
@@ -270,6 +272,20 @@
         const key = `${data.sessionId}:${data.playerId}`;
         mediaStates.set(key, data);
         if (!data.playing) stopAudioPlayer(data.sessionId, data.playerId);
+        if (data.sessionId === currentSession && data.prerolled && data.hasVideo && !prerollCaptures.has(key)) {
+          prerollCaptures.add(key);
+          let retries = 0;
+          const capturePreroll = () => {
+            if (currentSession !== data.sessionId) { prerollCaptures.delete(key); return; }
+            if (captureBusy) {
+              if (retries++ < 25) setTimeout(capturePreroll, 100);
+              else prerollCaptures.delete(key);
+              return;
+            }
+            void capture(true);
+          };
+          setTimeout(capturePreroll, 0);
+        }
         if (data.sessionId === currentSession && data.playing && data.hasVideo) startMediaCapture();
         else stopMediaCaptureIfIdle();
         return;

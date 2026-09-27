@@ -65,6 +65,7 @@ export function createServoMediaHost({ emit = () => {} } = {}) {
   const emitState = (state) => emit({
     type: 'media-state', playerId: state.id, playing: state.playing,
     hasVideo: state.hasVideo, hasAudio: state.hasAudio,
+    prerolled: state.hasPrerolledVideo,
   });
 
   const updatePosition = (state) => {
@@ -112,32 +113,98 @@ export function createServoMediaHost({ emit = () => {} } = {}) {
     }
   };
 
+  const markPrerollTrackReady = (state) => {
+    state.prerollTracksReady++;
+    if (state.prerollTracksReady === state.trackCount && !state.prerollStateSent) {
+      state.prerollStateSent = true;
+      // Servo uses its initial Paused/Playing state notification to advance
+      // HAVE_METADATA to HAVE_ENOUGH_DATA and run its ordinary autoplay path.
+      // The host has now decoded one sample for each primary track.
+      sendEvent(state, EVENT.state, 0);
+    }
+  };
+
+  const decodeVideoSample = async (sample) => {
+    const frame = sample.toVideoFrame();
+    try {
+      const width = frame.codedWidth;
+      const height = frame.codedHeight;
+      if (!width || !height || width > 8192 || height > 8192) {
+        throw new RangeError('Decoded video frame dimensions are outside the supported range.');
+      }
+      const pixels = new Uint8Array(frame.allocationSize({ format: 'BGRA' }));
+      if (pixels.byteLength !== width * height * 4 || pixels.byteLength > MAX_VIDEO_FRAME_BYTES) {
+        throw new RangeError('Decoded video frame exceeds the safe frame buffer limit.');
+      }
+      await frame.copyTo(pixels, { format: 'BGRA' });
+      return { width, height, pixels };
+    } finally {
+      frame.close();
+    }
+  };
+
+  const decodeAudioSample = (state, sample) => {
+    const channels = sample.numberOfChannels;
+    const frames = sample.numberOfFrames;
+    if (!channels || channels > MAX_AUDIO_CHANNELS || frames * channels > 1_048_576) {
+      throw new RangeError('Decoded audio sample exceeds the supported channel or frame limit.');
+    }
+    const planar = new Float32Array(frames * channels);
+    for (let channel = 0; channel < channels; channel++) {
+      const plane = new Float32Array(frames);
+      sample.copyTo(plane, { planeIndex: channel, format: 'f32-planar' });
+      const gain = state.muted ? 0 : state.volume;
+      const offset = channel * frames;
+      if (gain === 0) planar.fill(0, offset, offset + frames);
+      else if (gain === 1) planar.set(plane, offset);
+      else {
+        for (let i = 0; i < frames; i++) planar[offset + i] = plane[i] * gain;
+      }
+    }
+    return { channels, frames, planar };
+  };
+
+  const outputAudioSample = (state, sample, decoded) => {
+    state.currentTime = Math.max(state.currentTime, sample.timestamp);
+    const data = new Uint8Array(decoded.planar.buffer);
+    if (state.audioViaServo) {
+      state.callbacks.audioFrame(state.id, decoded.channels, sample.sampleRate, data);
+    } else {
+      emit({
+        type: 'media-audio', playerId: state.id, channels: decoded.channels,
+        sampleRate: sample.sampleRate, timestamp: sample.timestamp,
+        data: decoded.planar.buffer,
+      }, [decoded.planar.buffer]);
+    }
+    sendEvent(state, EVENT.position, state.currentTime);
+  };
+
   async function playVideo(state, sink) {
+    let firstSample = true;
     try {
       for await (const sample of sink.samples(state.seekTarget ?? 0)) {
         try {
-          if (!(await waitForPlay(state))) return;
           if (sample.timestamp + (sample.duration ?? 0) < (state.seekTarget ?? 0)) continue;
-          if (!(await pace(state, Math.max(sample.timestamp, state.seekTarget ?? 0)))) continue;
-          const frame = sample.toVideoFrame();
-          try {
-            const width = frame.codedWidth;
-            const height = frame.codedHeight;
-            if (!width || !height || width > 8192 || height > 8192) {
-              throw new RangeError('Decoded video frame dimensions are outside the supported range.');
-            }
-            const pixels = new Uint8Array(frame.allocationSize({ format: 'BGRA' }));
-            if (pixels.byteLength !== width * height * 4 || pixels.byteLength > MAX_VIDEO_FRAME_BYTES) {
-              throw new RangeError('Decoded video frame exceeds the safe frame buffer limit.');
-            }
-            await frame.copyTo(pixels, { format: 'BGRA' });
+          if (firstSample) {
+            const decoded = await decodeVideoSample(sample);
             if (state.closed) return;
-            state.currentTime = Math.max(state.currentTime, sample.timestamp);
-            state.callbacks.videoFrame(state.id, width, height, pixels);
-            sendEvent(state, EVENT.position, state.currentTime);
-          } finally {
-            frame.close();
+            state.callbacks.videoFrame(state.id, decoded.width, decoded.height, decoded.pixels);
+            state.hasPrerolledVideo = true;
+            emitState(state);
+            markPrerollTrackReady(state);
+            firstSample = false;
+            // Keep this sample as the still frame while paused. The next
+            // sample is paced from the normal play command below.
+            if (!(await waitForPlay(state))) return;
+            continue;
           }
+          if (!(await waitForPlay(state))) return;
+          if (!(await pace(state, Math.max(sample.timestamp, state.seekTarget ?? 0)))) continue;
+          const decoded = await decodeVideoSample(sample);
+          if (state.closed) return;
+          state.currentTime = Math.max(state.currentTime, sample.timestamp);
+          state.callbacks.videoFrame(state.id, decoded.width, decoded.height, decoded.pixels);
+          sendEvent(state, EVENT.position, state.currentTime);
         } finally {
           sample.close();
         }
@@ -151,42 +218,20 @@ export function createServoMediaHost({ emit = () => {} } = {}) {
   }
 
   async function playAudio(state, sink) {
+    let firstSample = true;
     try {
       for await (const sample of sink.samples(state.seekTarget ?? 0)) {
         try {
-          if (!(await waitForPlay(state))) return;
           if (sample.timestamp + sample.duration < (state.seekTarget ?? 0)) continue;
+          const decoded = decodeAudioSample(state, sample);
+          if (firstSample) {
+            firstSample = false;
+            markPrerollTrackReady(state);
+          }
+          if (!(await waitForPlay(state))) return;
           if (!(await pace(state, Math.max(sample.timestamp, state.seekTarget ?? 0)))) continue;
-          const channels = sample.numberOfChannels;
-          const frames = sample.numberOfFrames;
-          if (!channels || channels > MAX_AUDIO_CHANNELS || frames * channels > 1_048_576) {
-            throw new RangeError('Decoded audio sample exceeds the supported channel or frame limit.');
-          }
-          const planar = new Float32Array(frames * channels);
-          for (let channel = 0; channel < channels; channel++) {
-            const plane = new Float32Array(frames);
-            sample.copyTo(plane, { planeIndex: channel, format: 'f32-planar' });
-            const gain = state.muted ? 0 : state.volume;
-            const offset = channel * frames;
-            if (gain === 0) planar.fill(0, offset, offset + frames);
-            else if (gain === 1) planar.set(plane, offset);
-            else {
-              for (let i = 0; i < frames; i++) planar[offset + i] = plane[i] * gain;
-            }
-          }
           if (state.closed) return;
-          state.currentTime = Math.max(state.currentTime, sample.timestamp);
-          const data = new Uint8Array(planar.buffer);
-          if (state.audioViaServo) {
-            state.callbacks.audioFrame(state.id, channels, sample.sampleRate, data);
-          } else {
-            emit({
-              type: 'media-audio', playerId: state.id, channels,
-              sampleRate: sample.sampleRate, timestamp: sample.timestamp,
-              data: planar.buffer,
-            }, [planar.buffer]);
-          }
-          sendEvent(state, EVENT.position, state.currentTime);
+          outputAudioSample(state, sample, decoded);
         } finally {
           sample.close();
         }
@@ -256,6 +301,7 @@ export function createServoMediaHost({ emit = () => {} } = {}) {
       baseTime: 0, playStartedAt: 0, seekable: false, seekTarget: 0,
       duration: null, hasVideo: Boolean(flags & 1), hasAudio: false,
       audioViaServo: Boolean(flags & 2), trackCount: 0, tracksDone: 0,
+      prerollTracksReady: 0, prerollStateSent: false, hasPrerolledVideo: false,
       waiters: [], initPromise: null,
     };
     players.set(id, state);
