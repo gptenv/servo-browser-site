@@ -48,3 +48,4 @@ next-env.d.ts
 /.codex/
 /outputs/
 /work/
+/public/servo-media-engine.bundle.mjs

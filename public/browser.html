@@ -33,14 +33,19 @@
       <div class="notice"><b>Network access:</b> Servo's host fetch runs in this Site's server Worker, so the browser's CORS gate does not block WASM network requests. Servo still applies its own page security rules. Requests are limited to public HTTP(S) destinations, with size and rate limits. This page does not provide a remote <code>/mcp</code> HTTP transport.</div>
     </aside>
   </main>
-  <footer class="shell"><span>Servo Rust engine · Worker ABI adapter · WebMCP page tools · <a href="/LICENSE.SITE">Site and harness MIT license</a> · <a href="/LICENSE.SERVO">Servo license</a> · <a href="/LICENSE.SERVO-MCP">Servo MCP source license</a> · <a href="/LICENSE.NOTOFONTS">Font notice</a></span><span>WASM runs on your device.</span></footer>
+  <footer class="shell"><span>Servo Rust engine · Worker ABI adapter · WebMCP page tools · <a href="/LICENSE.SITE">Site and harness MIT license</a> · <a href="/LICENSE.SERVO">Servo license</a> · <a href="/LICENSE.SERVO-MCP">Servo MCP source license</a> · <a href="/LICENSE.NOTOFONTS">Font notice</a> · <a href="/LICENSE.MEDIABUNNY">Mediabunny MPL-2.0 license</a></span><span>WASM runs on your device.</span></footer>
   <script type="module">
     const $ = (selector) => document.querySelector(selector);
-    const worker = new Worker(new URL('./engine-worker.10c57d5c7df5c4f788b2b9f6e69b802393c0c3cd77c95f70a675342b8260653b.js', import.meta.url), { type: 'module', name: 'servo-wasm-runtime' });
+    const worker = new Worker(new URL('./engine-worker.3ecd4d67a9720314778ce920b60abc5fe2eca48f85d56c6a8b1fd100b6340f3a.js', import.meta.url), { type: 'module', name: 'servo-wasm-runtime' });
     const pending = new Map();
     let nextId = 1;
     let currentSession = null;
     let registered = 0;
+    let audioContext = null;
+    let mediaCaptureTimer = null;
+    let captureBusy = false;
+    const mediaStates = new Map();
+    const audioSources = new Map();
     const toolNames = ['servo_session_create','servo_session_status','servo_session_close','servo_navigate','servo_reload','servo_history','servo_inspect','servo_wait','servo_evaluate','servo_click','servo_type_text','servo_press_key','servo_scroll','servo_screenshot','servo_get_capabilities','servo_register_font'];
     const setStatus = (message, error = false) => { $('#status').textContent = message; $('#status').classList.toggle('error', error); };
     function call(name, input) {
@@ -62,7 +67,7 @@
       const image = viewport.querySelector('img.screen');
       if (!image) viewport.innerHTML = '<div class="empty"><div class="loading"><i class="spinner"></i><span>Page ready · capture a frame to display it</span></div></div>';
     }
-    function showScreenshot(result) {
+    function showScreenshot(result, quiet = false) {
       const item = result?.results?.[0];
       if (!item?.ok) throw new Error(item?.error || 'Could not capture Servo screenshot.');
       $('#go').disabled = false;
@@ -72,8 +77,83 @@
       image.className = 'screen'; image.alt = 'Screenshot rendered by Servo WebAssembly';
       image.src = `data:image/png;base64,${item.result.pngBase64}`;
       $('#viewport').replaceChildren(image);
-      setStatus('Frame rendered by Servo WebAssembly.');
+      if (!quiet) setStatus('Frame rendered by Servo WebAssembly.');
     }
+    async function enableAudioOutput() {
+      const AudioContextImpl = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextImpl) return null;
+      try {
+        audioContext ??= new AudioContextImpl({ latencyHint: 'interactive' });
+        if (audioContext.state === 'suspended') await audioContext.resume();
+        return audioContext;
+      } catch (error) {
+        setStatus(`Browser audio output is unavailable: ${error.message || error}`, true);
+        return null;
+      }
+    }
+    document.addEventListener('pointerdown', () => { void enableAudioOutput(); }, true);
+    document.addEventListener('keydown', () => { void enableAudioOutput(); }, true);
+    function stopAudioPlayer(sessionId, playerId) {
+      const key = `${sessionId}:${playerId}`;
+      const state = audioSources.get(key);
+      if (!state) return;
+      for (const source of state.nodes) { try { source.stop(); } catch {} }
+      state.nodes.clear();
+      audioSources.delete(key);
+    }
+    function clearSessionMedia(sessionId) {
+      for (const [key, state] of mediaStates) {
+        if (state.sessionId === sessionId) {
+          stopAudioPlayer(sessionId, state.playerId);
+          mediaStates.delete(key);
+        }
+      }
+      stopMediaCaptureIfIdle();
+    }
+    function playAudioChunk(message) {
+      if (message.sessionId !== currentSession || !audioContext || audioContext.state !== 'running') return;
+      const channels = Number(message.channels);
+      const sampleRate = Number(message.sampleRate);
+      if (!Number.isInteger(channels) || channels < 1 || channels > 8 ||
+          !Number.isFinite(sampleRate) || sampleRate < 8000 || sampleRate > 384000 ||
+          !(message.data instanceof ArrayBuffer)) return;
+      const planar = new Float32Array(message.data);
+      if (!planar.length || planar.length % channels) return;
+      const frames = planar.length / channels;
+      const key = `${message.sessionId}:${message.playerId}`;
+      let state = audioSources.get(key);
+      if (!state) { state = { nodes: new Set(), nextTime: 0 }; audioSources.set(key, state); }
+      if (state.nextTime - audioContext.currentTime > 1.25) return;
+      const buffer = audioContext.createBuffer(channels, frames, sampleRate);
+      for (let channel = 0; channel < channels; channel++) {
+        buffer.copyToChannel(planar.subarray(channel * frames, (channel + 1) * frames), channel);
+      }
+      const source = audioContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(audioContext.destination);
+      const when = Math.max(audioContext.currentTime + 0.025, state.nextTime);
+      state.nextTime = when + buffer.duration;
+      state.nodes.add(source);
+      source.onended = () => { state.nodes.delete(source); if (!state.nodes.size) audioSources.delete(key); };
+      source.start(when);
+    }
+    function startMediaCapture() {
+      if (mediaCaptureTimer !== null) return;
+      mediaCaptureTimer = setInterval(() => {
+        if (document.hidden || captureBusy || !currentSession) return;
+        if (![...mediaStates.values()].some((state) => state.sessionId === currentSession && state.playing && state.hasVideo)) return;
+        void capture(true);
+      }, 150);
+    }
+    function stopMediaCaptureIfIdle() {
+      if ([...mediaStates.values()].some((state) => state.sessionId === currentSession && state.playing && state.hasVideo)) return;
+      if (mediaCaptureTimer !== null) clearInterval(mediaCaptureTimer);
+      mediaCaptureTimer = null;
+    }
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) stopMediaCaptureIfIdle();
+      else if ([...mediaStates.values()].some((state) => state.sessionId === currentSession && state.playing && state.hasVideo)) startMediaCapture();
+    });
     async function startSession(input) {
       if (currentSession) return navigate(input.url);
       setStatus('Downloading, compiling, and starting Servo…');
@@ -83,6 +163,7 @@
         const result = await call('servo_session_create', { sessions: [input] });
         const created = first(result);
         currentSession = created.sessionId;
+        if ([...mediaStates.values()].some((state) => state.sessionId === currentSession && state.playing && state.hasVideo)) startMediaCapture();
         $('#sid').textContent = currentSession;
         setStatus('Servo session ready. Capturing the first frame…');
         $('#engine-state').textContent = 'ENGINE · RUNNING';
@@ -99,10 +180,13 @@
       try { setStatus('Servo navigating…'); const result = await call('servo_navigate', { sessions: [{ sessionId: currentSession, url }] }); showPage(first(result).page); await capture(); }
       catch (error) { setStatus(error.message || String(error), true); }
     }
-    async function capture() {
+    async function capture(quiet = false) {
       if (!currentSession) return;
-      try { const result = await call('servo_screenshot', { sessions: [{ sessionId: currentSession }] }); showScreenshot(result); }
+      if (captureBusy) return;
+      captureBusy = true;
+      try { const result = await call('servo_screenshot', { sessions: [{ sessionId: currentSession }] }); showScreenshot(result, quiet); }
       catch (error) { setStatus(error.message || String(error), true); }
+      finally { captureBusy = false; }
     }
     $('#sample').addEventListener('click', () => startSession({ html: '<!doctype html><html><head><meta charset="utf-8"><title>Servo is running</title><style>body{font:16px system-ui;background:#101711;color:#e8eee5;padding:9vw}main{max-width:640px}small{font:11px ui-monospace;color:#c8ed88;letter-spacing:.16em}h1{font-size:clamp(34px,6vw,68px);letter-spacing:-.06em;line-height:1.02;margin:22px 0}p{color:#aab5a9;line-height:1.7}code{color:#c8ed88}</style></head><body><main><small>SERVO · WASM RUNTIME</small><h1>This page was rendered by Servo.</h1><p>The Rust browser engine is running as WebAssembly inside a dedicated worker. Its page tools are available through this site’s WebMCP registry.</p><p><code>servo_session_create → servo_screenshot</code></p></main></body></html>' }));
     $('#nav-form').addEventListener('submit', (event) => { event.preventDefault(); const url = $('#address').value.trim(); if (!url) return startSession({ html: '<!doctype html><title>Servo</title><p>Servo is running.</p>' }); try { assertPageUrl(url); navigate(url); } catch (error) { setStatus(error.message, true); } });
@@ -176,10 +260,20 @@
     });
     $('#capture').addEventListener('click', capture);
     $('#inspect').addEventListener('click', async () => { try { showPage(first(await call('servo_inspect', { sessions: [{ sessionId: currentSession }] }))); setStatus('Page inspection updated.'); } catch (error) { setStatus(error.message, true); } });
-    $('#close').addEventListener('click', async () => { try { first(await call('servo_session_close', { sessionIds: [currentSession] })); currentSession = null; $('#sid').textContent = 'NO SESSION'; $('#viewport').innerHTML = '<div class="empty"><div class="empty-icon">⌁</div><h2>Servo session closed</h2><p>The runtime was released. Start another session when ready.</p><button class="action" onclick="document.querySelector(\'#sample\').click()">Run embedded sample</button></div>'; enableControls(false); $('#engine-state').textContent = 'ENGINE · MODULE CACHED'; setStatus('Session closed.'); } catch (error) { setStatus(error.message, true); } });
+    $('#close').addEventListener('click', async () => { const closedSession = currentSession; try { first(await call('servo_session_close', { sessionIds: [closedSession] })); clearSessionMedia(closedSession); currentSession = null; $('#sid').textContent = 'NO SESSION'; $('#viewport').innerHTML = '<div class="empty"><div class="empty-icon">⌁</div><h2>Servo session closed</h2><p>The runtime was released. Start another session when ready.</p><button class="action" onclick="document.querySelector(\'#sample\').click()">Run embedded sample</button></div>'; enableControls(false); $('#engine-state').textContent = 'ENGINE · MODULE CACHED'; setStatus('Session closed.'); } catch (error) { setStatus(error.message, true); } });
     worker.onmessage = async ({ data }) => {
       if (data.type === 'result' || data.type === 'error') { const request = pending.get(data.id); if (!request) return; pending.delete(data.id); data.type === 'error' ? request.reject(new Error(data.error)) : request.resolve(data.result); return; }
       if (data.type === 'log') { $('#log').style.display = 'block'; $('#log').textContent = (data.text + '\n' + $('#log').textContent).slice(0, 6000); }
+      if (data.type === 'media-audio') { playAudioChunk(data); return; }
+      if (data.type === 'media-state') {
+        const key = `${data.sessionId}:${data.playerId}`;
+        mediaStates.set(key, data);
+        if (!data.playing) stopAudioPlayer(data.sessionId, data.playerId);
+        if (data.sessionId === currentSession && data.playing && data.hasVideo) startMediaCapture();
+        else stopMediaCaptureIfIdle();
+        return;
+      }
+      if (data.type === 'media-error') { if (data.sessionId === currentSession) setStatus(`Media playback: ${data.message}`, true); return; }
       if (data.type === 'ready') {
         $('#worker-state').innerHTML = '<i class="indicator ok"></i><span>Worker adapter initialized · WASM loads on start</span>';
         $('#engine-state').textContent = 'ENGINE · READY TO START';

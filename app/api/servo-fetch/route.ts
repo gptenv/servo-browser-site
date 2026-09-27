@@ -240,13 +240,12 @@ export async function POST(request: Request): Promise<Response> {
   }
   const headers = new Headers();
   let headerBytes = 0;
+  // These are headers supplied by the Servo runtime. Cookie and Authorization
+  // are forwarded only when Servo's request credentials policy adds them; the
+  // Site's own incoming browser cookies are never copied upstream.
   const denied = new Set([
     "connection", "content-length", "host", "keep-alive", "proxy-authorization",
     "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade",
-    "origin",
-    // The Site proxy is a public, unauthenticated Worker-style transport. Do
-    // not forward ambient browser credentials to arbitrary public hosts.
-    "cookie",
   ]);
   try {
     for (const pair of input.headers) {
@@ -255,7 +254,7 @@ export async function POST(request: Request): Promise<Response> {
         return reply(400, "Invalid Servo request headers.");
       }
       const name = pair[0].toLowerCase();
-      if (denied.has(name) || name === "authorization" || name.startsWith("cf-") ||
+      if (denied.has(name) || name.startsWith("cf-") ||
           name.startsWith("x-forwarded-")) continue;
       headerBytes += pair[0].length + pair[1].length;
       if (headerBytes > MAX_REQUEST_HEADER_BYTES) return reply(400, "Servo request headers exceed 8 KiB.");
@@ -266,40 +265,9 @@ export async function POST(request: Request): Promise<Response> {
   }
   if (!headers.has("user-agent")) headers.set("user-agent", SERVO_USER_AGENT);
 
-  // A browser preflight is a permissions check for JavaScript running in the
-  // page, not a request that needs to reach the destination. This same-origin
-  // Worker endpoint authorizes Servo's bounded public requests itself and
-  // supplies the corresponding CORS grant to the engine.
-  const rawHeaders = input.headers as [string, string][];
-  const originalHeader = (name: string): string | undefined =>
-    rawHeaders.find((pair) => pair[0].toLowerCase() === name)?.[1];
-  const requestedMethod = originalHeader("access-control-request-method")?.toUpperCase();
-  if (method === "OPTIONS" && requestedMethod) {
-    if (!/^(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS)$/.test(requestedMethod)) {
-      return reply(405, "This HTTP method is not supported.");
-    }
-    const allowHeaders = originalHeader("access-control-request-headers") || "*";
-    const metadataBytes = new TextEncoder().encode(JSON.stringify({
-      status: 204,
-      statusText: "No Content",
-      url: target.href,
-      headers: [
-        ["access-control-allow-origin", "*"],
-        ["access-control-allow-methods", requestedMethod],
-        ["access-control-allow-headers", allowHeaders],
-        ["access-control-expose-headers", "*"],
-      ],
-      setCookies: [],
-    }));
-    return new Response(frameMetadata(metadataBytes), {
-      headers: {
-        "cache-control": "no-store",
-        "content-type": "application/octet-stream",
-        "x-servo-metadata-format": "1",
-      },
-    });
-  }
-
+  // Servo performs CORS checks in the WASM module. Forward the original
+  // Origin and preflight headers to the destination so its actual CORS policy
+  // decides whether credentialed requests and their preflights are allowed.
   const controller = new AbortController();
   let headersTimeout: ReturnType<typeof setTimeout> | undefined = setTimeout(
     () => controller.abort("Servo upstream response headers timed out"),
@@ -312,6 +280,9 @@ export async function POST(request: Request): Promise<Response> {
       method,
       headers,
       body: method === "GET" || method === "HEAD" ? undefined : body,
+      // Responses can vary by Cookie and Origin. Keep shared Cloudflare caches
+      // out of this cross-session browser transport.
+      cache: "no-store",
       redirect: "manual",
       signal: controller.signal,
     });
@@ -322,22 +293,14 @@ export async function POST(request: Request): Promise<Response> {
       await upstream.body?.cancel();
       return reply(502, "The remote response exceeds 512 MiB.");
     }
-    const requestedHeaders = originalHeader("access-control-request-headers");
-    const corsHeaders = [
-      ["access-control-allow-origin", "*"],
-      ["access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS"],
-      ["access-control-allow-headers", requestedHeaders || "*"],
-      ["access-control-expose-headers", "*"],
-    ];
     const setCookies = upstream.headers.getSetCookie?.() ?? [];
     const safeHeaders = [...upstream.headers.entries()].filter(([name]) =>
-      !["content-length", "content-encoding", "set-cookie"].includes(name.toLowerCase()) &&
-      !name.toLowerCase().startsWith("access-control-"));
+      !["content-length", "content-encoding", "set-cookie"].includes(name.toLowerCase()));
     const metadataBytes = new TextEncoder().encode(JSON.stringify({
       status: upstream.status,
       statusText: upstream.statusText,
       url: upstream.url || target.href,
-      headers: [...safeHeaders, ...corsHeaders],
+      headers: safeHeaders,
       setCookies,
     }));
     if (metadataBytes.byteLength > MAX_UPSTREAM_METADATA_BYTES) {
