@@ -1289,20 +1289,30 @@ class ServoWorkerRuntime {
     // reflected in the count) and only a one-pass resource-generation bump
     // in the middle -- so require two consecutive quiet passes, not one,
     // before concluding nothing further is arriving.
+    const startedAt = performance.now();
     let quietPasses = 0;
     for (let pass = 0; pass < maxPasses; pass++) {
+      const remainingMs = maxDurationMs - (performance.now() - startedAt);
+      if (remainingMs <= 0) break;
       const resourcesBefore = exports.servo_worker_frame_resource_generation();
       const itemsBefore = exports.servo_worker_frame_item_count();
       if (exports.servo_worker_request_frame() !== 1) {
         throw new Error('Servo has not been bootstrapped');
       }
-      await this.pumpUntilSettled({ maxDurationMs, networkIdleMs });
+      const pumpResult = await this.pumpUntilSettled({
+        maxDurationMs: Math.min(1_000, remainingMs),
+        networkIdleMs: Math.min(networkIdleMs, 100),
+      });
       if (exports.servo_worker_frame_resource_generation() === resourcesBefore &&
           exports.servo_worker_frame_item_count() === itemsBefore) {
         if (++quietPasses >= 2) break;
       } else {
         quietPasses = 0;
       }
+      // Background media, analytics, and polling do not prevent capturing the
+      // current frame. Keep the overall budget bounded and don't wait on an
+      // indefinitely busy document.
+      if (!pumpResult.settled) break;
     }
     if (this.#screenshotStreamActive) {
       throw new Error('A screenshot stream is already active on this runtime');

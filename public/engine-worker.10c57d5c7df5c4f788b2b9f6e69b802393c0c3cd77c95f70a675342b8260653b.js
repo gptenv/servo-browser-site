@@ -1,4 +1,4 @@
-import { createServoWorkerRuntime } from './worker-adapter.70a81790faa3b9c8b95a518ab24b34eb487b830cd32fec0c784ca286723ad6d2.mjs';
+import { createServoWorkerRuntime } from './worker-adapter.3643744c06b20230663143b9b6d60e20308304c87b33d6c60c6c6138cb9854c2.mjs';
 
 const MAX_SESSIONS = 3;
 const MAX_DURATION = 15_000;
@@ -70,8 +70,7 @@ async function pump(runtime, ms = 10_000) {
   if (!result.settled) throw new Error(`Servo did not settle within ${bounded} ms.`);
 }
 
-function parsePageResult(runtime) {
-  const value = runtime.pageResult();
+function parsePageResult(value) {
   if (value && typeof value === 'object' && 'Ok' in value) {
     const string = value.Ok?.String;
     if (typeof string === 'string') { try { return JSON.parse(string); } catch { return string; } }
@@ -79,12 +78,74 @@ function parsePageResult(runtime) {
   return value;
 }
 
-async function pageSummary(runtime) {
-  if (!runtime.evaluatePage(`JSON.stringify({url:location.href,title:document.title,text:(document.body?.innerText||'').slice(0,20000)})`)) throw new Error('Servo rejected page inspection.');
-  await pump(runtime, 10_000);
-  const page = parsePageResult(runtime);
+async function pumpBriefly(runtime, ms = 250) {
+  const bounded = Math.max(1, Math.min(MAX_DURATION, ms));
+  return runtime.pumpUntilSettled({
+    maxDurationMs: bounded,
+    maxTurns: 1_000,
+    networkIdleMs: Math.min(100, bounded),
+  });
+}
+
+async function pageSummary(runtime, maxDurationMs = 2_000) {
+  const result = await runtime.evaluate(
+    `JSON.stringify({url:location.href,title:document.title,readyState:document.readyState,navigationId:performance.timeOrigin,text:(document.body?.innerText||'').slice(0,20000)})`,
+    { maxDurationMs },
+  );
+  if (result?.Err) throw new Error(`Servo page inspection failed: ${result.Err}`);
+  const page = parsePageResult(result);
   if (!page || typeof page !== 'object' || typeof page.url !== 'string') throw new Error('Servo returned an invalid page summary.');
   return page;
+}
+
+const shortPause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitForNavigation(runtime, beforePage, maxDurationMs = 8_000) {
+  const deadline = performance.now() + Math.max(100, Math.min(MAX_DURATION, maxDurationMs));
+  let page;
+  let changedAt;
+  while (performance.now() < deadline) {
+    const remaining = deadline - performance.now();
+    try { page = await pageSummary(runtime, Math.min(750, remaining)); } catch { /* Retry while the next document is being created. */ }
+    if (page && (!beforePage || page.url !== beforePage.url || page.navigationId !== beforePage.navigationId)) {
+      changedAt ??= performance.now();
+      if (page.readyState !== 'loading' || performance.now() - changedAt >= 750) {
+        return { page, navigationPending: page.readyState === 'loading' };
+      }
+    }
+    if (page?.readyState === 'loading') changedAt ??= performance.now();
+    if (page && beforePage && page.url === beforePage.url && page.navigationId === beforePage.navigationId &&
+        changedAt !== undefined && page.readyState !== 'loading') {
+      return { page, navigationPending: false };
+    }
+    const slice = Math.min(100, Math.max(1, deadline - performance.now()));
+    await pumpBriefly(runtime, slice);
+    await shortPause(Math.min(25, Math.max(1, deadline - performance.now())));
+  }
+  if (page) return {
+    page,
+    navigationPending: (page.url === beforePage?.url && page.navigationId === beforePage?.navigationId) || page.readyState === 'loading',
+  };
+  return { page: await pageSummary(runtime), navigationPending: true };
+}
+
+async function waitForPageChange(runtime, beforePage, maxDurationMs = 1_500, navigationDurationMs = 8_000) {
+  const deadline = performance.now() + Math.max(100, Math.min(MAX_DURATION, maxDurationMs));
+  let page = beforePage;
+  while (performance.now() < deadline) {
+    try { page = await pageSummary(runtime, Math.min(750, deadline - performance.now())); } catch { /* Keep pumping until a page can be inspected. */ }
+    if (page && beforePage && (page.url !== beforePage.url || page.navigationId !== beforePage.navigationId)) {
+      return waitForNavigation(runtime, beforePage, navigationDurationMs);
+    }
+    if (page && beforePage && (page.title !== beforePage.title || page.text !== beforePage.text)) {
+      return { page, navigationPending: false };
+    }
+    const slice = Math.min(100, Math.max(1, deadline - performance.now()));
+    await pumpBriefly(runtime, slice);
+    await shortPause(Math.min(25, Math.max(1, deadline - performance.now())));
+  }
+  if (page) return { page, navigationPending: false };
+  return { page: await pageSummary(runtime), navigationPending: false };
 }
 
 function b64(bytes) {
@@ -217,14 +278,21 @@ async function createSession(options = {}) {
   });
   const sessionId = crypto.randomUUID();
   try {
+    const beforePage = options.url ? await pageSummary(runtime) : null;
     if (options.html !== undefined) {
       if (!runtime.loadHtml(options.html)) throw new Error('Servo rejected the supplied HTML document.');
     } else if (options.url && !runtime.loadPage(options.url)) throw new Error('Servo rejected the requested URL.');
-    if (options.url || options.html !== undefined) await pump(runtime, options.maxDurationMs ?? 10_000);
+    let navigationPending = false;
+    if (options.url) {
+      const navigation = await waitForNavigation(runtime, beforePage, options.maxDurationMs ?? 8_000);
+      navigationPending = navigation.navigationPending;
+    } else if (options.html !== undefined) {
+      await pumpBriefly(runtime, 250);
+    }
     const page = await pageSummary(runtime);
     sessions.set(sessionId, runtime);
     queues.set(sessionId, Promise.resolve());
-    return { sessionId, page, capabilities: runtime.capabilities(), runtime: 'servo-wasm', storage: 'this page only' };
+    return { sessionId, page, navigationPending, capabilities: runtime.capabilities(), runtime: 'servo-wasm', storage: 'this page only' };
   } catch (error) {
     // A WASM trap can leave Rust's browser RefCell borrowed. Preserve the
     // original page failure instead of calling exports on a poisoned runtime.
@@ -259,18 +327,21 @@ async function each(sessionsInput, operation) {
   })) };
 }
 
-const summaryAfter = async (runtime, action, maxDurationMs = 10_000) => { await pump(runtime, maxDurationMs); return { action, page: await pageSummary(runtime) }; };
+const summaryAfter = async (runtime, action, maxDurationMs = 250) => {
+  await pumpBriefly(runtime, Math.max(1, Math.min(250, maxDurationMs ?? 250)));
+  return { action, page: await pageSummary(runtime) };
+};
 const specs = {
   servo_session_create: { title: 'Create Servo browser sessions', description: 'Start one or more isolated Servo WebAssembly browser tabs in this page. Each session has its own browser runtime.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { url: { type: 'string', format: 'uri' }, html: { type: 'string', maxLength: MAX_HTML_BYTES }, width: { type: 'integer', minimum: 320, maximum: 1920, default: 1280 }, height: { type: 'integer', minimum: 240, maximum: 1600, default: 720 }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION, default: 10000 } }, additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, execute: async ({ sessions: input }) => { const results = []; for (const entry of input) { try { const result = await createSessionSerialized(entry); results.push({ sessionId: result.sessionId, ok: true, result }); } catch (error) { results.push({ ok: false, error: String(error?.message ?? error).slice(0, 2048) }); } } return { results }; } },
   servo_session_status: { title: 'Check Servo sessions', description: 'Check whether selected in-page browser sessions are active.', inputSchema: { type: 'object', properties: { sessionIds: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string', format: 'uuid' } } }, required: ['sessionIds'], additionalProperties: false }, execute: async ({ sessionIds }) => ({ results: sessionIds.map((sessionId) => ({ sessionId, ok: true, result: { status: sessions.has(sessionId) ? 'active' : 'missing', runtimeAvailable: sessions.has(sessionId), resumable: false, storage: 'this page only' } })) }) },
   servo_session_close: { title: 'Close Servo sessions', description: 'Close selected browser sessions and release their Servo runtime from this page.', inputSchema: { type: 'object', properties: { sessionIds: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string', format: 'uuid' } } }, required: ['sessionIds'], additionalProperties: false }, execute: async ({ sessionIds }) => ({ results: await Promise.all(sessionIds.map(async (sessionId) => { if (!sessions.has(sessionId)) return { sessionId, ok: false, error: 'Unknown or already closed session.' }; try { await withSession(sessionId, (runtime) => runtime.reset()); sessions.delete(sessionId); queues.delete(sessionId); return { sessionId, ok: true, result: { status: 'closed' } }; } catch (error) { return { sessionId, ok: false, error: String(error?.message ?? error) }; } })) }) },
-  servo_navigate: { title: 'Navigate Servo tabs', description: 'Navigate selected Servo tabs to public HTTP(S) URLs.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' }, url: { type: 'string', format: 'uri' }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION } }, required: ['sessionId', 'url'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, execute: (input) => each(input.sessions, async (runtime, entry) => { const url = assertPublicUrl(entry.url); if (!runtime.loadPage(url)) throw new Error('Servo rejected the requested URL.'); return summaryAfter(runtime, 'navigate', entry.maxDurationMs); }) },
-  servo_reload: { title: 'Reload Servo tabs', description: 'Reload the current page in selected Servo tabs.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION } }, required: ['sessionId'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, execute: (input) => each(input.sessions, async (runtime, entry) => { if (!runtime.reload()) throw new Error('Servo could not reload the current page.'); return summaryAfter(runtime, 'reload', entry.maxDurationMs); }) },
-  servo_history: { title: 'Traverse Servo history', description: 'Move a selected Servo tab backward or forward in page history.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' }, direction: { type: 'string', enum: ['back', 'forward'] }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION } }, required: ['sessionId', 'direction'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, execute: (input) => each(input.sessions, async (runtime, entry) => { const moved = entry.direction === 'back' ? runtime.goBack() : runtime.goForward(); if (moved) await pump(runtime, entry.maxDurationMs); return { action: entry.direction, page: await pageSummary(runtime) }; }) },
+  servo_navigate: { title: 'Navigate Servo tabs', description: 'Navigate selected Servo tabs to public HTTP(S) URLs.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' }, url: { type: 'string', format: 'uri' }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION } }, required: ['sessionId', 'url'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, execute: (input) => each(input.sessions, async (runtime, entry) => { const beforePage = await pageSummary(runtime); const url = assertPublicUrl(entry.url); if (!runtime.loadPage(url)) throw new Error('Servo rejected the requested URL.'); return { action: 'navigate', ...await waitForNavigation(runtime, beforePage, entry.maxDurationMs ?? 8_000) }; }) },
+  servo_reload: { title: 'Reload Servo tabs', description: 'Reload the current page in selected Servo tabs.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION } }, required: ['sessionId'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, execute: (input) => each(input.sessions, async (runtime, entry) => { const beforePage = await pageSummary(runtime); if (!runtime.reload()) throw new Error('Servo could not reload the current page.'); return { action: 'reload', ...await waitForPageChange(runtime, beforePage, Math.min(1_500, entry.maxDurationMs ?? 1_500), entry.maxDurationMs ?? 8_000) }; }) },
+  servo_history: { title: 'Traverse Servo history', description: 'Move a selected Servo tab backward or forward in page history.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' }, direction: { type: 'string', enum: ['back', 'forward'] }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION } }, required: ['sessionId', 'direction'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, execute: (input) => each(input.sessions, async (runtime, entry) => { const beforePage = await pageSummary(runtime); const moved = entry.direction === 'back' ? runtime.goBack() : runtime.goForward(); if (!moved) return { action: entry.direction, page: beforePage, navigationPending: false }; return { action: entry.direction, ...await waitForPageChange(runtime, beforePage, Math.min(1_500, entry.maxDurationMs ?? 1_500), entry.maxDurationMs ?? 8_000) }; }) },
   servo_inspect: { title: 'Inspect Servo tabs', description: 'Read the current URL, title, and visible body text in selected Servo tabs.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' } }, required: ['sessionId'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, annotations: { readOnlyHint: true, untrustedContentHint: true }, execute: (input) => each(input.sessions, (runtime) => pageSummary(runtime)) },
   servo_wait: { title: 'Wait for Servo tabs', description: 'Pump selected Servo tabs until activity settles or the time budget expires.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION, default: 1000 } }, required: ['sessionId'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, execute: (input) => each(input.sessions, async (runtime, entry) => { await pump(runtime, entry.maxDurationMs ?? 1000); return pageSummary(runtime); }) },
-  servo_evaluate: { title: 'Evaluate JavaScript in Servo tabs', description: 'Run synchronous JavaScript in each selected Servo page and return its result. Page scripts may change page state or cause side effects.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' }, script: { type: 'string', maxLength: MAX_SCRIPT_BYTES }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION } }, required: ['sessionId', 'script'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, annotations: { untrustedContentHint: true }, execute: (input) => each(input.sessions, async (runtime, entry) => { if (new TextEncoder().encode(entry.script).byteLength > MAX_SCRIPT_BYTES) throw new RangeError('Script exceeds 64 KiB.'); if (!runtime.evaluatePage(entry.script)) throw new Error('Servo rejected this page evaluation.'); await pump(runtime, entry.maxDurationMs); return { value: parsePageResult(runtime), page: await pageSummary(runtime) }; }) },
-  servo_click: { title: 'Click in Servo tabs', description: 'Send a mouse click at viewport coordinates in selected Servo tabs. Links targeting another browsing context open in the current Servo tab.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' }, x: { type: 'number' }, y: { type: 'number' }, button: { type: 'integer', minimum: 0, maximum: 4, default: 0 }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION } }, required: ['sessionId', 'x', 'y'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, execute: (input) => each(input.sessions, async (runtime, entry) => { if (entry.button === undefined || entry.button === 0) { const installed = await runtime.evaluate(SINGLE_TAB_LINK_FALLBACK, { maxDurationMs: entry.maxDurationMs ?? 10_000 }); if (installed?.Err) throw new Error(`Could not prepare link navigation: ${installed.Err}`); } runtime.click(entry.x, entry.y, entry.button ?? 0); return summaryAfter(runtime, 'click', entry.maxDurationMs); }) },
+  servo_evaluate: { title: 'Evaluate JavaScript in Servo tabs', description: 'Run synchronous JavaScript in each selected Servo page and return its result. Page scripts may change page state or cause side effects.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' }, script: { type: 'string', maxLength: MAX_SCRIPT_BYTES }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION } }, required: ['sessionId', 'script'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, annotations: { untrustedContentHint: true }, execute: (input) => each(input.sessions, async (runtime, entry) => { if (new TextEncoder().encode(entry.script).byteLength > MAX_SCRIPT_BYTES) throw new RangeError('Script exceeds 64 KiB.'); const result = await runtime.evaluate(entry.script, { maxDurationMs: entry.maxDurationMs ?? 10_000 }); return { value: parsePageResult(result), page: await pageSummary(runtime) }; }) },
+  servo_click: { title: 'Click in Servo tabs', description: 'Send a mouse click at viewport coordinates in selected Servo tabs. Links targeting another browsing context open in the current Servo tab.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' }, x: { type: 'number' }, y: { type: 'number' }, button: { type: 'integer', minimum: 0, maximum: 4, default: 0 }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION } }, required: ['sessionId', 'x', 'y'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, execute: (input) => each(input.sessions, async (runtime, entry) => { const beforePage = await pageSummary(runtime); if (entry.button === undefined || entry.button === 0) { const installed = await runtime.evaluate(SINGLE_TAB_LINK_FALLBACK, { maxDurationMs: entry.maxDurationMs ?? 10_000 }); if (installed?.Err) throw new Error(`Could not prepare link navigation: ${installed.Err}`); } runtime.click(entry.x, entry.y, entry.button ?? 0); return { action: 'click', ...await waitForPageChange(runtime, beforePage, Math.min(1_500, entry.maxDurationMs ?? 1_500), entry.maxDurationMs ?? 8_000) }; }) },
   servo_type_text: { title: 'Type into Servo tabs', description: 'Type text into the focused element in selected Servo tabs.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' }, text: { type: 'string', maxLength: 4096 }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION } }, required: ['sessionId', 'text'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, execute: (input) => each(input.sessions, async (runtime, entry) => { runtime.typeText(entry.text); return summaryAfter(runtime, 'type', entry.maxDurationMs); }) },
   servo_press_key: { title: 'Press a key in Servo tabs', description: 'Send a keyboard key to selected Servo tabs.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' }, key: { type: 'string', minLength: 1, maxLength: 64 }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION } }, required: ['sessionId', 'key'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, execute: (input) => each(input.sessions, async (runtime, entry) => { runtime.pressKey(entry.key); return summaryAfter(runtime, 'key', entry.maxDurationMs); }) },
   servo_scroll: { title: 'Scroll Servo tabs', description: 'Scroll selected Servo tabs by the given pixel offsets.', inputSchema: { type: 'object', properties: { sessions: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'object', properties: { sessionId: { type: 'string', format: 'uuid' }, deltaX: { type: 'number' }, deltaY: { type: 'number' }, x: { type: 'number' }, y: { type: 'number' }, maxDurationMs: { type: 'integer', minimum: 100, maximum: MAX_DURATION } }, required: ['sessionId', 'deltaX', 'deltaY'], additionalProperties: false } } }, required: ['sessions'], additionalProperties: false }, execute: (input) => each(input.sessions, async (runtime, entry) => { runtime.scrollBy(entry.deltaX, entry.deltaY, { x: entry.x, y: entry.y }); return summaryAfter(runtime, 'scroll', entry.maxDurationMs); }) },
