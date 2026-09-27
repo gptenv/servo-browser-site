@@ -7,7 +7,7 @@
  */
 
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-const MAX_RESPONSE_HEADERS_BYTES = 64 * 1024;
+const MAX_RESPONSE_HEADERS_BYTES = 256 * 1024;
 const RESPONSE_CHUNK_BYTES = 64 * 1024;
 const MAX_REDIRECTS = 10;
 const MAX_OUTGOING_CONNECTIONS = 6;
@@ -118,7 +118,7 @@ export function parseWorkerHostMessage(bytes) {
       headerBytes += entry[0].length + entry[1].length;
     }
     if (headerBytes > MAX_RESPONSE_HEADERS_BYTES) {
-      throw new RangeError('Servo Worker request headers exceed 64 KiB');
+      throw new RangeError('Servo Worker request headers exceed 256 KiB');
     }
     const preflight = request.cors_preflight;
     if (preflight !== null && preflight !== undefined &&
@@ -601,7 +601,7 @@ class ServoWorkerRuntime {
       for (const cookie of setCookies) headers.push(['set-cookie', cookie]);
       const headersBytes = encoder.encode(JSON.stringify(headers));
       if (headersBytes.length > MAX_RESPONSE_HEADERS_BYTES) {
-        throw new Error('Servo response headers exceed 64 KiB');
+        throw new Error('Servo response headers exceed 256 KiB');
       }
       const beginResult = this.#withBytes(
         [idBytes, urlBytes, headersBytes],

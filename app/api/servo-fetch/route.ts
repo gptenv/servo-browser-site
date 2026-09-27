@@ -1,6 +1,7 @@
 const MAX_PROXY_REQUEST_BYTES = 1024 * 1024;
 const MAX_UPSTREAM_BODY_BYTES = 8 * 1024 * 1024;
-const MAX_HEADER_BYTES = 8 * 1024;
+const MAX_REQUEST_HEADER_BYTES = 8 * 1024;
+const MAX_UPSTREAM_METADATA_BYTES = 256 * 1024;
 const UPSTREAM_TIMEOUT_MS = 15_000;
 const RATE_WINDOW_MS = 60_000;
 const MAX_REQUESTS_PER_WINDOW = 240;
@@ -113,12 +114,12 @@ async function readBounded(response: Response): Promise<Uint8Array> {
   return body;
 }
 
-function encodeBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-  }
-  return btoa(binary);
+function frameResponse(metadata: Uint8Array, body: Uint8Array): Uint8Array {
+  const framed = new Uint8Array(4 + metadata.byteLength + body.byteLength);
+  new DataView(framed.buffer).setUint32(0, metadata.byteLength, false);
+  framed.set(metadata, 4);
+  framed.set(body, 4 + metadata.byteLength);
+  return framed;
 }
 
 function reply(status: number, message: string): Response {
@@ -188,7 +189,7 @@ export async function POST(request: Request): Promise<Response> {
       if (denied.has(name) || name === "authorization" || name.startsWith("cf-") ||
           name.startsWith("x-forwarded-")) continue;
       headerBytes += pair[0].length + pair[1].length;
-      if (headerBytes > MAX_HEADER_BYTES) return reply(400, "Servo request headers exceed 8 KiB.");
+      if (headerBytes > MAX_REQUEST_HEADER_BYTES) return reply(400, "Servo request headers exceed 8 KiB.");
       headers.append(name, pair[1]);
     }
   } catch {
@@ -221,10 +222,11 @@ export async function POST(request: Request): Promise<Response> {
       ],
       setCookies: [],
     }));
-    return new Response(null, {
+    return new Response(frameResponse(metadataBytes, new Uint8Array()), {
       headers: {
         "cache-control": "no-store",
-        "x-servo-upstream": encodeBase64(metadataBytes),
+        "content-type": "application/octet-stream",
+        "x-servo-metadata-format": "1",
       },
     });
   }
@@ -248,29 +250,27 @@ export async function POST(request: Request): Promise<Response> {
       ["access-control-allow-headers", requestedHeaders || "*"],
       ["access-control-expose-headers", "*"],
     ];
-    const setCookies: string[] = [];
+    const setCookies = upstream.headers.getSetCookie?.() ?? [];
     const safeHeaders = [...upstream.headers.entries()].filter(([name]) =>
       !["content-length", "content-encoding", "set-cookie"].includes(name.toLowerCase()) &&
       !name.toLowerCase().startsWith("access-control-"));
-    safeHeaders.push(...corsHeaders);
     const metadataBytes = new TextEncoder().encode(JSON.stringify({
       status: upstream.status,
       statusText: upstream.statusText,
       url: upstream.url || target.href,
-      headers: safeHeaders,
+      headers: [...safeHeaders, ...corsHeaders],
       setCookies,
     }));
-    const metadata = encodeBase64(metadataBytes);
-    if (metadata.length > MAX_HEADER_BYTES) {
+    if (metadataBytes.byteLength > MAX_UPSTREAM_METADATA_BYTES) {
       await upstream.body?.cancel();
-      return reply(502, "The remote response headers are too large.");
+      return reply(502, "The remote response metadata exceeds 256 KiB.");
     }
     const responseBody = method === "HEAD" ? new Uint8Array() : await readBounded(upstream);
-    return new Response(responseBody, {
+    return new Response(frameResponse(metadataBytes, responseBody), {
       headers: {
         "cache-control": "no-store",
         "content-type": "application/octet-stream",
-        "x-servo-upstream": metadata,
+        "x-servo-metadata-format": "1",
       },
     });
   } catch (error) {

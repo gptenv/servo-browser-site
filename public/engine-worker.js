@@ -73,6 +73,55 @@ function b64(bytes) {
   return btoa(binary);
 }
 
+const MAX_PROXY_METADATA_BYTES = 256 * 1024;
+
+async function readProxyEnvelope(response) {
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('Servo network proxy returned no response envelope.');
+  let buffered = new Uint8Array();
+  async function readExactly(length) {
+    while (buffered.byteLength < length) {
+      const { done, value } = await reader.read();
+      if (done) throw new Error('Servo network proxy returned a truncated response envelope.');
+      const next = new Uint8Array(buffered.byteLength + value.byteLength);
+      next.set(buffered);
+      next.set(value, buffered.byteLength);
+      buffered = next;
+    }
+    const result = buffered.subarray(0, length);
+    buffered = buffered.subarray(length);
+    return result;
+  }
+
+  const lengthBytes = await readExactly(4);
+  const metadataLength = new DataView(lengthBytes.buffer, lengthBytes.byteOffset, 4).getUint32(0, false);
+  if (metadataLength === 0 || metadataLength > MAX_PROXY_METADATA_BYTES) {
+    await reader.cancel();
+    throw new RangeError('Servo network proxy response metadata exceeds 256 KiB.');
+  }
+  const metadataBytes = await readExactly(metadataLength);
+  const metadata = JSON.parse(new TextDecoder().decode(metadataBytes));
+  const body = new ReadableStream({
+    start(controller) {
+      if (buffered.byteLength) controller.enqueue(buffered);
+      buffered = new Uint8Array();
+    },
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          reader.releaseLock();
+          controller.close();
+        } else controller.enqueue(value);
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel(reason) { return reader.cancel(reason); },
+  });
+  return { metadata, body };
+}
+
 async function createSession(options = {}) {
   if (sessions.size >= MAX_SESSIONS) throw new Error(`This browser tab can hold at most ${MAX_SESSIONS} live Servo sessions at once.`);
   if (options.url && options.html !== undefined) throw new TypeError('Provide a URL or inline HTML, not both.');
@@ -121,14 +170,20 @@ async function createSession(options = {}) {
         try { message = (await response.json()).error || message; } catch { /* Keep the status message. */ }
         throw new Error(message);
       }
-      const encodedMetadata = response.headers.get('x-servo-upstream');
-      if (!encodedMetadata) throw new Error('Servo network proxy returned no response metadata.');
-      const metadataBinary = atob(encodedMetadata);
-      const metadataBytes = Uint8Array.from(metadataBinary, (char) => char.charCodeAt(0));
-      const metadata = JSON.parse(new TextDecoder().decode(metadataBytes));
+      let metadata;
+      let proxiedBody = response.body;
+      if (response.headers.get('x-servo-metadata-format') === '1') {
+        ({ metadata, body: proxiedBody } = await readProxyEnvelope(response));
+      } else {
+        const encodedMetadata = response.headers.get('x-servo-upstream');
+        if (!encodedMetadata) throw new Error('Servo network proxy returned no response metadata.');
+        const metadataBinary = atob(encodedMetadata);
+        const metadataBytes = Uint8Array.from(metadataBinary, (char) => char.charCodeAt(0));
+        metadata = JSON.parse(new TextDecoder().decode(metadataBytes));
+      }
       const headers = new Headers(metadata.headers);
-      const responseBody = [204, 205, 304].includes(metadata.status) ? null : response.body;
-      if (responseBody === null) await response.body?.cancel();
+      const responseBody = method === 'HEAD' || [204, 205, 304].includes(metadata.status) ? null : proxiedBody;
+      if (responseBody === null) await proxiedBody?.cancel();
       const upstream = new Response(responseBody, {
         status: metadata.status,
         statusText: metadata.statusText,
