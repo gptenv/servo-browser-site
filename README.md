@@ -8,9 +8,9 @@ Live Site: <https://servo-browser.defcron.chatgpt.site>
 
 - Node.js 22.13 or newer
 - npm
-- The compressed Servo WebAssembly module at `public/servo_js_wasm.wasm.gz`
+- The compressed Servo WebAssembly module in `public/`, named `servo_js_wasm.<module-sha256>.wasm.gz`
 
-The WASM module is a large generated build artifact and is intentionally excluded from Git. The browser Worker fetches that exact path and decompresses it before compiling the module. Obtain the matching bundle from the Servo WASM build used for this Site and place it there before running or building locally. The root-level `servo_js_wasm.wasm.gz` ignore rule covers a legacy duplicate; the Site uses the file under `public/`.
+The WASM module is a large generated build artifact and is intentionally excluded from Git. Its filename includes the module's SHA-256 digest so a deployment cannot accidentally keep serving an older module from the same URL. The browser Worker fetches the matching digest-named file and decompresses it before compiling the module. Obtain the module from the Servo WASM build used for this Site and name it with its SHA-256 digest before running or building locally. Both root-level and `public/` WASM bundles are ignored by Git.
 
 ## Run locally
 
@@ -47,6 +47,6 @@ The page registers tools for creating, checking, and closing sessions; navigatin
 
 - `.openai/hosting.json` identifies the Sites project.
 - Push source changes to the configured `main` branch before saving a Sites version. Production deployments are made from a saved version built from that pushed source.
-- Do not commit `dist/`, `node_modules/`, or the WASM bundle. The deployment package includes the local `public/servo_js_wasm.wasm.gz` asset even though Git ignores it.
+- Do not commit `dist/`, `node_modules/`, or the WASM bundle. The deployment package includes the local digest-named `public/servo_js_wasm.<module-sha256>.wasm.gz` asset even though Git ignores it.
 
 The Site-specific app code is covered by [`public/LICENSE.SITE`](public/LICENSE.SITE). Servo, Servo MCP, and bundled fonts keep their own notices in `public/LICENSE.SERVO`, `public/LICENSE.SERVO-MCP`, and `public/LICENSE.NOTOFONTS`.

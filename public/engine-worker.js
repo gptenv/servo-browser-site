@@ -4,6 +4,7 @@ const MAX_SESSIONS = 3;
 const MAX_DURATION = 15_000;
 const MAX_HTML_BYTES = 1_000_000;
 const MAX_SCRIPT_BYTES = 64 * 1024;
+const SERVO_WASM_ASSET = './servo_js_wasm.d987679cb77e64151efd48225139ea8414ecf309bc49af8440d04ae2614b1fb8.wasm.gz';
 const sessions = new Map();
 const queues = new Map();
 let wasmModule;
@@ -34,7 +35,7 @@ function assertPublicUrl(value, protocols = ['http:', 'https:']) {
 async function compileWasm() {
   if (wasmModule) return wasmModule;
   if (!wasmPromise) wasmPromise = (async () => {
-    const response = await fetch(new URL('./servo_js_wasm.wasm.gz', self.location.href));
+    const response = await fetch(new URL(SERVO_WASM_ASSET, self.location.href));
     if (!response.ok) throw new Error(`Could not load the embedded Servo WASM (${response.status}).`);
     if (!('DecompressionStream' in self)) throw new Error('This browser does not support gzip decompression required by the embedded Servo module.');
     const bytes = await new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();

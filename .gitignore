@@ -3,6 +3,8 @@
 # dependencies
 /servo_js_wasm.wasm.gz
 /public/servo_js_wasm.wasm.gz
+/servo_js_wasm.*.wasm.gz
+/public/servo_js_wasm.*.wasm.gz
 /node_modules
 /.pnp
 .pnp.*
