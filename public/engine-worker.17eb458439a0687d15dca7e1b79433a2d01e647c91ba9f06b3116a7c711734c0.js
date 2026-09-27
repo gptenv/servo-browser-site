@@ -4,7 +4,7 @@ const MAX_SESSIONS = 3;
 const MAX_DURATION = 15_000;
 const MAX_HTML_BYTES = 1_000_000;
 const MAX_SCRIPT_BYTES = 64 * 1024;
-const SERVO_WASM_ASSET = './servo_js_wasm.d987679cb77e64151efd48225139ea8414ecf309bc49af8440d04ae2614b1fb8.wasm.gz';
+const SERVO_WASM_ASSET = './servo_js_wasm.bb1cd58c78da58bbcc26de521e2e98ecff70cfa3dd1ea5339cdaa1eef6be1e11.wasm.gz';
 const sessions = new Map();
 const queues = new Map();
 let wasmModule;
