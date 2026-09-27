@@ -9,7 +9,7 @@
     :root{color-scheme:dark;--bg:#101411;--panel:#171d19;--panel2:#1d251f;--line:#303a32;--ink:#e8eee5;--muted:#99a499;--lime:#c8ed88;--orange:#f1bd7d;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
     *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}button,input,textarea{font:inherit}button{cursor:pointer;color:inherit}a{color:var(--lime)}.shell{max-width:1440px;margin:0 auto;padding:0 34px}
     header{height:70px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #293129}.wordmark{display:flex;gap:11px;align-items:center;font-weight:650;letter-spacing:.05em;font-size:12px}.glyph{display:grid;place-items:center;width:28px;height:28px;border:1px solid #60764d;border-radius:9px;color:var(--lime);font:19px Georgia}.header-right{display:flex;align-items:center;gap:10px;font:10px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}.indicator{width:7px;height:7px;border-radius:50%;background:#798277}.indicator.ok{background:var(--lime);box-shadow:0 0 12px #c8ed8870}.indicator.warn{background:var(--orange)}
-    .layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:22px;padding:28px 0 32px}.maincol{min-width:0}.intro{display:flex;justify-content:space-between;align-items:end;margin:0 0 18px}.kicker{font:10px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--lime)}h1{font-size:33px;line-height:1.08;letter-spacing:-.045em;font-weight:550;margin:8px 0 5px}.intro p{margin:0;color:var(--muted);font-size:13px}.engine-state{font:10px var(--mono);color:var(--muted);white-space:nowrap;padding-bottom:4px}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}.toolbar{display:flex;align-items:center;gap:7px;padding:10px 12px;border-bottom:1px solid var(--line);background:#141a16}.iconbtn{display:grid;place-items:center;width:29px;height:29px;background:transparent;border:0;border-radius:6px;color:#a9b3a9;font-size:16px}.iconbtn:hover:not(:disabled){background:#283129;color:var(--lime)}.iconbtn:disabled{opacity:.35;cursor:default}.address{height:33px;min-width:0;flex:1;border:1px solid #384238;border-radius:7px;background:#0f1411;color:#e2e9de;padding:0 10px;font:11px var(--mono)}.action{border:1px solid #829b65;background:#263222;border-radius:7px;padding:7px 11px;color:var(--lime);font-size:11px;font-weight:600;white-space:nowrap}.action:hover{background:#34432b}.action.secondary{color:#d4ddd0;border-color:#3a463b;background:#202721}.action.secondary:hover{border-color:#74806f}.action.danger{color:#f0bb9c;border-color:#574038;background:#2d211d}.viewport{position:relative;display:grid;place-items:center;min-height:420px;background:#0d110e;overflow:hidden}.screen{display:block;max-width:100%;max-height:72vh;object-fit:contain}.empty{text-align:center;max-width:420px;padding:42px 25px}.empty-icon{width:51px;height:51px;margin:0 auto 17px;display:grid;place-items:center;border-radius:15px;border:1px solid #3e5038;color:var(--lime);font:27px Georgia;background:#1b2419}.empty h2{margin:0 0 8px;font-size:17px;font-weight:550}.empty p{margin:0 auto 18px;max-width:355px;color:var(--muted);font-size:12px}.loading{display:flex;align-items:center;gap:9px;color:var(--muted);font:11px var(--mono)}.spinner{width:12px;height:12px;border:2px solid #424d42;border-top-color:var(--lime);border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.below{display:grid;grid-template-columns:1fr auto;gap:12px;padding:11px 13px;border-top:1px solid var(--line);align-items:center}.statusline{min-height:19px;color:#aab5aa;font-size:11px}.statusline.error{color:#f2ad91}.sid{font:10px var(--mono);color:#728071}.log{max-height:160px;overflow:auto;border-top:1px solid var(--line);padding:11px 13px;color:#8e9a8e;font:10px/1.55 var(--mono);white-space:pre-wrap;display:none}.details{padding:14px 15px;border-top:1px solid var(--line);display:none}.details h2{font-size:12px;margin:0 0 8px}.details pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#bdc8bb;font:10px/1.55 var(--mono);max-height:200px;overflow:auto}
+    .layout{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:22px;padding:28px 0 32px}.maincol{min-width:0}.intro{display:flex;justify-content:space-between;align-items:end;margin:0 0 18px}.kicker{font:10px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--lime)}h1{font-size:33px;line-height:1.08;letter-spacing:-.045em;font-weight:550;margin:8px 0 5px}.intro p{margin:0;color:var(--muted);font-size:13px}.engine-state{font:10px var(--mono);color:var(--muted);white-space:nowrap;padding-bottom:4px}.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden}.toolbar{display:flex;align-items:center;gap:7px;padding:10px 12px;border-bottom:1px solid var(--line);background:#141a16}.iconbtn{display:grid;place-items:center;width:29px;height:29px;background:transparent;border:0;border-radius:6px;color:#a9b3a9;font-size:16px}.iconbtn:hover:not(:disabled){background:#283129;color:var(--lime)}.iconbtn:disabled{opacity:.35;cursor:default}.address{height:33px;min-width:0;flex:1;border:1px solid #384238;border-radius:7px;background:#0f1411;color:#e2e9de;padding:0 10px;font:11px var(--mono)}.action{border:1px solid #829b65;background:#263222;border-radius:7px;padding:7px 11px;color:var(--lime);font-size:11px;font-weight:600;white-space:nowrap}.action:hover{background:#34432b}.action.secondary{color:#d4ddd0;border-color:#3a463b;background:#202721}.action.secondary:hover{border-color:#74806f}.action.danger{color:#f0bb9c;border-color:#574038;background:#2d211d}.viewport{position:relative;display:flex;align-items:center;justify-content:center;height:min(72vh,720px);min-height:420px;background:#0d110e;overflow:hidden;outline:none;touch-action:manipulation}.viewport:focus-visible{box-shadow:inset 0 0 0 2px #c8ed88}.screen{display:block;width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain;user-select:none;-webkit-user-drag:none}.card:fullscreen{display:flex;flex-direction:column;width:100vw;height:100dvh;max-height:100dvh;border-radius:0;background:var(--panel)}.card:fullscreen .viewport{height:auto;min-height:0;flex:1}.card:fullscreen .screen{width:100%;height:100%;max-width:none;max-height:none}.card:fullscreen .below{flex:none}.empty{text-align:center;max-width:420px;padding:42px 25px}.empty-icon{width:51px;height:51px;margin:0 auto 17px;display:grid;place-items:center;border-radius:15px;border:1px solid #3e5038;color:var(--lime);font:27px Georgia;background:#1b2419}.empty h2{margin:0 0 8px;font-size:17px;font-weight:550}.empty p{margin:0 auto 18px;max-width:355px;color:var(--muted);font-size:12px}.loading{display:flex;align-items:center;gap:9px;color:var(--muted);font:11px var(--mono)}.spinner{width:12px;height:12px;border:2px solid #424d42;border-top-color:var(--lime);border-radius:50%;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.below{display:grid;grid-template-columns:1fr auto;gap:12px;padding:11px 13px;border-top:1px solid var(--line);align-items:center}.statusline{min-height:19px;color:#aab5aa;font-size:11px}.statusline.error{color:#f2ad91}.sid{font:10px var(--mono);color:#728071}.log{max-height:160px;overflow:auto;border-top:1px solid var(--line);padding:11px 13px;color:#8e9a8e;font:10px/1.55 var(--mono);white-space:pre-wrap;display:none}.details{padding:14px 15px;border-top:1px solid var(--line);display:none}.details h2{font-size:12px;margin:0 0 8px}.details pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;color:#bdc8bb;font:10px/1.55 var(--mono);max-height:200px;overflow:auto}
     aside{display:flex;flex-direction:column;gap:13px}.sidepanel{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:15px}.side-title{display:flex;justify-content:space-between;gap:10px;align-items:center;font-size:12px;font-weight:600}.pill{font:9px var(--mono);border:1px solid #3e4a3d;color:var(--muted);padding:3px 6px;border-radius:99px;white-space:nowrap}.pill.live{border-color:#60794c;color:var(--lime)}.sidecopy{color:var(--muted);font-size:11px;margin:9px 0 0;line-height:1.6}.tools{list-style:none;padding:0;margin:11px 0 0;display:grid;gap:0}.tools li{padding:7px 0;border-top:1px solid #2b342d;color:#bec8bd;font:10px var(--mono)}.tools li:first-child{border-top:0}.tools .toolprefix{color:#899788}.runtimefacts{display:grid;gap:8px;margin-top:12px}.fact{display:flex;justify-content:space-between;gap:12px;color:#aab5a9;font-size:10px}.fact b{font:10px var(--mono);font-weight:400;color:#dde5d8;text-align:right}.notice{border-left:2px solid var(--orange);padding:10px 11px;background:#211f1a;color:#c5b8a6;font-size:10px;line-height:1.6;border-radius:0 6px 6px 0}.notice b{color:var(--orange);font-weight:600}.sample{width:100%;margin-top:12px}footer{border-top:1px solid #293129;padding:17px 0 23px;display:flex;justify-content:space-between;gap:15px;color:#788477;font-size:10px}footer span:last-child{font-family:var(--mono)}
     @media(max-width:980px){.layout{grid-template-columns:minmax(0,1fr) 250px;gap:14px}.shell{padding:0 20px}.viewport{min-height:350px}}@media(max-width:720px){.layout{grid-template-columns:1fr}.maincol{order:0}aside{display:grid;grid-template-columns:1fr 1fr}.sidepanel:first-child{grid-column:1/-1}.viewport{min-height:310px}.intro{align-items:start;flex-direction:column;gap:7px}}@media(max-width:460px){.shell{padding:0 14px}.header-right{font-size:8px}.layout{padding-top:20px}.toolbar{gap:3px;padding:8px}.iconbtn{width:26px}.action{padding:7px 8px}.viewport{min-height:270px}aside{grid-template-columns:1fr}.sidepanel:first-child{grid-column:auto}.below{grid-template-columns:1fr}.sid{overflow-wrap:anywhere}}
   </style>
@@ -20,8 +20,8 @@
     <section class="maincol">
       <div class="intro"><div><div class="kicker">Browser runtime · 01</div><h1>Servo, running here.</h1><p>The browser engine executes as WebAssembly in this page. Its controls are available as WebMCP tools.</p></div><div id="engine-state" class="engine-state">ENGINE · NOT LOADED</div></div>
       <div class="card">
-        <form id="nav-form" class="toolbar"><button id="back" class="iconbtn" type="button" title="Back" aria-label="Back" disabled>←</button><button id="forward" class="iconbtn" type="button" title="Forward" aria-label="Forward" disabled>→</button><button id="reload" class="iconbtn" type="button" title="Reload" aria-label="Reload" disabled>↻</button><input id="address" class="address" type="url" placeholder="https://example.com" aria-label="Page URL"><button id="go" class="action" type="submit">Open page</button></form>
-        <div id="viewport" class="viewport"><div class="empty"><div class="empty-icon">⌁</div><h2>Start an isolated Servo session</h2><p>Load the embedded sample to verify the real WASM engine, then navigate to public pages. The compressed 21 MB module is compiled on first start.</p><div class="loading" id="worker-state"><i class="indicator"></i><span>Initializing browser host…</span></div><button id="sample" class="action sample" type="button">Run embedded sample</button></div></div>
+        <form id="nav-form" class="toolbar"><button id="back" class="iconbtn" type="button" title="Back" aria-label="Back" disabled>←</button><button id="forward" class="iconbtn" type="button" title="Forward" aria-label="Forward" disabled>→</button><button id="reload" class="iconbtn" type="button" title="Reload" aria-label="Reload" disabled>↻</button><input id="address" class="address" type="url" placeholder="https://example.com" aria-label="Page URL"><button id="go" class="action" type="submit">Open page</button><button id="fullscreen" class="action secondary" type="button" title="Fullscreen page widget" aria-label="Fullscreen page widget" disabled>⛶</button></form>
+        <div id="viewport" class="viewport" tabindex="0" role="application" aria-label="Rendered page. Click, scroll, or focus and use the keyboard to interact."><div class="empty"><div class="empty-icon">⌁</div><h2>Start an isolated Servo session</h2><p>Load the embedded sample to verify the real WASM engine, then navigate to public pages. The compressed 21 MB module is compiled on first start.</p><div class="loading" id="worker-state"><i class="indicator"></i><span>Initializing browser host…</span></div><button id="sample" class="action sample" type="button">Run embedded sample</button></div></div>
         <div class="below"><div id="status" class="statusline" role="status" aria-live="polite">Worker host starting.</div><div id="sid" class="sid">NO SESSION</div></div>
         <div id="details" class="details"><h2>Page inspection</h2><pre id="page-data"></pre></div><pre id="log" class="log" aria-label="Servo runtime log"></pre>
       </div>
@@ -66,6 +66,7 @@
       const item = result?.results?.[0];
       if (!item?.ok) throw new Error(item?.error || 'Could not capture Servo screenshot.');
       $('#go').disabled = false;
+      $('#fullscreen').disabled = false;
       showPage(item.result.page);
       const image = document.createElement('img');
       image.className = 'screen'; image.alt = 'Screenshot rendered by Servo WebAssembly';
@@ -92,7 +93,7 @@
         $('#engine-state').textContent = 'ENGINE · ERROR';
       } finally { $('#sample').disabled = false; $('#go').disabled = false; }
     }
-    function enableControls(enabled) { for (const id of ['back','forward','reload','capture','inspect','close']) $(`#${id}`).disabled = !enabled; }
+    function enableControls(enabled) { for (const id of ['back','forward','reload','capture','inspect','close','fullscreen']) $(`#${id}`).disabled = !enabled; }
     async function navigate(url) {
       if (!currentSession) return startSession({ url });
       try { setStatus('Servo navigating…'); const result = await call('servo_navigate', { sessions: [{ sessionId: currentSession, url }] }); showPage(first(result).page); await capture(); }
@@ -109,6 +110,70 @@
     $('#back').addEventListener('click', async () => { try { showPage(first(await call('servo_history', { sessions: [{ sessionId: currentSession, direction: 'back' }] })).page); await capture(); } catch (error) { setStatus(error.message, true); } });
     $('#forward').addEventListener('click', async () => { try { showPage(first(await call('servo_history', { sessions: [{ sessionId: currentSession, direction: 'forward' }] })).page); await capture(); } catch (error) { setStatus(error.message, true); } });
     $('#reload').addEventListener('click', async () => { try { showPage(first(await call('servo_reload', { sessions: [{ sessionId: currentSession }] })).page); await capture(); } catch (error) { setStatus(error.message, true); } });
+    $('#fullscreen').addEventListener('click', async () => {
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else await $('.card').requestFullscreen();
+        $('#viewport').focus({ preventScroll: true });
+      } catch (error) { setStatus(error.message || 'Fullscreen is unavailable in this browser.', true); }
+    });
+    document.addEventListener('fullscreenchange', () => {
+      const active = document.fullscreenElement === $('.card');
+      $('#fullscreen').textContent = active ? 'Exit fullscreen' : '⛶';
+      $('#fullscreen').title = active ? 'Exit fullscreen' : 'Fullscreen page widget';
+      $('#fullscreen').setAttribute('aria-label', $('#fullscreen').title);
+    });
+    function pointInFrame(event) {
+      const image = $('#viewport').querySelector('img.screen');
+      if (!image?.naturalWidth || !image.naturalHeight) return null;
+      const rect = image.getBoundingClientRect();
+      const scale = Math.min(rect.width / image.naturalWidth, rect.height / image.naturalHeight);
+      const contentWidth = image.naturalWidth * scale;
+      const contentHeight = image.naturalHeight * scale;
+      const offsetX = (rect.width - contentWidth) / 2;
+      const offsetY = (rect.height - contentHeight) / 2;
+      const x = event.clientX - rect.left - offsetX;
+      const y = event.clientY - rect.top - offsetY;
+      if (x < 0 || x > contentWidth || y < 0 || y > contentHeight) return null;
+      const scaleX = image.naturalWidth / contentWidth;
+      const scaleY = image.naturalHeight / contentHeight;
+      return { x: Math.round(x * scaleX), y: Math.round(y * scaleY), scaleX, scaleY };
+    }
+    $('#viewport').addEventListener('click', async (event) => {
+      if (!currentSession || event.button !== 0) return;
+      const point = pointInFrame(event); if (!point) return;
+      event.preventDefault(); $('#viewport').focus({ preventScroll: true });
+      try { const result = first(await call('servo_click', { sessions: [{ sessionId: currentSession, x: point.x, y: point.y }] })); showPage(result.page); await capture(); }
+      catch (error) { setStatus(error.message || String(error), true); }
+    });
+    let wheelTimer; let wheelDeltaX = 0; let wheelDeltaY = 0; let wheelPoint = null;
+    $('#viewport').addEventListener('wheel', (event) => {
+      if (!currentSession) return;
+      const point = pointInFrame(event); if (!point) return;
+      event.preventDefault(); wheelPoint = point;
+      const unit = event.deltaMode === 1 ? 40 : event.deltaMode === 2 ? $('#viewport').clientHeight : 1;
+      wheelDeltaX += event.deltaX * unit * point.scaleX;
+      wheelDeltaY += event.deltaY * unit * point.scaleY;
+      clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(async () => {
+        const deltaX = wheelDeltaX; const deltaY = wheelDeltaY; const target = wheelPoint;
+        wheelDeltaX = 0; wheelDeltaY = 0;
+        try { const result = first(await call('servo_scroll', { sessions: [{ sessionId: currentSession, deltaX, deltaY, x: target.x, y: target.y }] })); showPage(result.page); await capture(); }
+        catch (error) { setStatus(error.message || String(error), true); }
+      }, 70);
+    }, { passive: false });
+    $('#viewport').addEventListener('keydown', async (event) => {
+      if (!currentSession || event.key === 'Escape' || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key.length === 1 || event.key === ' ') {
+        event.preventDefault();
+        try { const result = first(await call('servo_type_text', { sessions: [{ sessionId: currentSession, text: event.key }] })); showPage(result.page); await capture(); }
+        catch (error) { setStatus(error.message || String(error), true); }
+      } else if (['Enter','Tab','Backspace','Delete','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Home','End','PageUp','PageDown'].includes(event.key)) {
+        event.preventDefault();
+        try { const result = first(await call('servo_press_key', { sessions: [{ sessionId: currentSession, key: event.key }] })); showPage(result.page); await capture(); }
+        catch (error) { setStatus(error.message || String(error), true); }
+      }
+    });
     $('#capture').addEventListener('click', capture);
     $('#inspect').addEventListener('click', async () => { try { showPage(first(await call('servo_inspect', { sessions: [{ sessionId: currentSession }] }))); setStatus('Page inspection updated.'); } catch (error) { setStatus(error.message, true); } });
     $('#close').addEventListener('click', async () => { try { first(await call('servo_session_close', { sessionIds: [currentSession] })); currentSession = null; $('#sid').textContent = 'NO SESSION'; $('#viewport').innerHTML = '<div class="empty"><div class="empty-icon">⌁</div><h2>Servo session closed</h2><p>The runtime was released. Start another session when ready.</p><button class="action" onclick="document.querySelector(\'#sample\').click()">Run embedded sample</button></div>'; enableControls(false); $('#engine-state').textContent = 'ENGINE · MODULE CACHED'; setStatus('Session closed.'); } catch (error) { setStatus(error.message, true); } });

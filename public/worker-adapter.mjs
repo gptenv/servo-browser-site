@@ -491,6 +491,7 @@ class ServoWorkerRuntime {
     let url = requestUrl(request);
     let method = requestMethod(request);
     let headers = requestHeaders(request);
+    headers.set('user-agent', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36 ServoBrowser/0.1 (+https://servo-browser.defcron.chatgpt.site)');
     let redirected = false;
     if (request.cors_preflight) await this.#corsPreflight(request, url, headers, signal);
     const mode = request.redirect_mode || 'Follow';

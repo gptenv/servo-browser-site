@@ -4,6 +4,7 @@ const MAX_HEADER_BYTES = 8 * 1024;
 const UPSTREAM_TIMEOUT_MS = 15_000;
 const RATE_WINDOW_MS = 60_000;
 const MAX_REQUESTS_PER_WINDOW = 240;
+const SERVO_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36 ServoBrowser/0.1 (+https://servo-browser.defcron.chatgpt.site)";
 const rates = new Map<string, number[]>();
 
 type ProxyRequest = {
@@ -193,6 +194,7 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return reply(400, "Invalid Servo request headers.");
   }
+  if (!headers.has("user-agent")) headers.set("user-agent", SERVO_USER_AGENT);
 
   // A browser preflight is a permissions check for JavaScript running in the
   // page, not a request that needs to reach the destination. This same-origin
