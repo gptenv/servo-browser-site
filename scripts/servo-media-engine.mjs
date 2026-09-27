@@ -57,7 +57,9 @@ export function createServoMediaHost({ emit = () => {} } = {}) {
   const players = new Map();
 
   const sendEvent = (state, kind, value0 = 0, value1 = 0, data = new Uint8Array()) => {
-    if (!state.closed) state.callbacks?.event(state.id, kind, value0, value1, data);
+    if (state.closed) return;
+    state.callbacks?.event(state.id, kind, value0, value1, data);
+    emit({ type: 'media-activity', playerId: state.id });
   };
 
   const emitState = (state) => emit({
@@ -287,6 +289,7 @@ export function createServoMediaHost({ emit = () => {} } = {}) {
           state.pendingBytes = Math.max(0, state.pendingBytes - bytes.byteLength);
           if (!state.closed) fail(state, error);
         });
+        emit({ type: 'media-activity', playerId });
         return 0;
       }
       case OP.end:
@@ -295,6 +298,7 @@ export function createServoMediaHost({ emit = () => {} } = {}) {
           state.writer.close().catch((error) => { if (!state.closed) fail(state, error); });
           if (!state.initPromise) state.initPromise = initialize(state);
         }
+        emit({ type: 'media-activity', playerId });
         return 0;
       case OP.play:
         if (state.failed || state.inputEnded && state.tracksDone === state.trackCount) return 0;
