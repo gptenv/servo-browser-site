@@ -36,7 +36,7 @@
   <footer class="shell"><span>Servo Rust engine · Worker ABI adapter · WebMCP page tools · <a href="/LICENSE.SITE">Site and harness MIT license</a> · <a href="/LICENSE.SERVO">Servo license</a> · <a href="/LICENSE.SERVO-MCP">Servo MCP source license</a> · <a href="/LICENSE.NOTOFONTS">Font notice</a> · <a href="/LICENSE.MEDIABUNNY">Mediabunny MPL-2.0 license</a></span><span>WASM runs on your device.</span></footer>
   <script type="module">
     const $ = (selector) => document.querySelector(selector);
-    const worker = new Worker(new URL('./engine-worker.8266f0cbf12000602e912758d419090ba58f17a9a0f9ba2bc3e576d3d1fe058e.js', import.meta.url), { type: 'module', name: 'servo-wasm-runtime' });
+    const worker = new Worker(new URL('./engine-worker.83da0dd00810d573fa6f7ef392aef1d2a5c2badb3e0a0ed3d3ceb682b74e140c.js', import.meta.url), { type: 'module', name: 'servo-wasm-runtime' });
     const pending = new Map();
     let nextId = 1;
     let currentSession = null;

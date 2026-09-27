@@ -1,4 +1,4 @@
-import { createServoWorkerRuntime } from './worker-adapter.mjs';
+import { createServoWorkerRuntime } from './worker-adapter.dc63579c7bd5fb5c29698688e0c1cdf016ad3233e6309549f5bb58761974ff2a.mjs';
 import { createServoMediaHost } from './servo-media-engine.bundle.mjs';
 
 const MAX_SESSIONS = 3;
