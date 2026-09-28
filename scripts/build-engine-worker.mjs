@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, readdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -33,4 +33,10 @@ if (updatedBrowser === browser && !browser.includes(`./${workerName}`)) {
 
 await writeFile(workerPath, workerSource);
 if (updatedBrowser !== browser) await writeFile(browserPath, updatedBrowser);
+for (const file of await readdir(path.join(projectRoot, 'public'))) {
+  if ((/^engine-worker\.[a-f0-9]+\.js$/.test(file) && file !== workerName) ||
+      (/^worker-adapter\.[a-f0-9]+\.mjs$/.test(file) && file !== adapterName)) {
+    await unlink(path.join(projectRoot, 'public', file));
+  }
+}
 process.stdout.write(`Built ${adapterName} and ${workerName}\n`);

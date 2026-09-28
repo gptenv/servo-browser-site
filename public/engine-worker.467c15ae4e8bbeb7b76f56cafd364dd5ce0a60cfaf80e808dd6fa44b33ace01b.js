@@ -1,4 +1,4 @@
-import { createServoWorkerRuntime } from './worker-adapter.mjs';
+import { createServoWorkerRuntime } from './worker-adapter.10eec8c619576f8c5d1e052e9d046a40752f022f61c417419a9225ca89c5fedf.mjs';
 import { createServoMediaHost } from './servo-media-engine.bundle.mjs';
 
 const SERVO_WASM_ASSET = './servo_js_wasm.ba1c248d9606c39496996cfc0c55a195a745418cae2448d7ead29d145c62ac2c.wasm.gz';

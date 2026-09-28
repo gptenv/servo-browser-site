@@ -21,7 +21,7 @@
       <div class="intro"><div><div class="kicker">Browser runtime · 01</div><h1>Servo, running here.</h1><p>The browser engine executes as WebAssembly in this page. Its controls are available as WebMCP tools.</p></div><div id="engine-state" class="engine-state">ENGINE · NOT LOADED</div></div>
       <div class="card">
         <form id="nav-form" class="toolbar"><button id="back" class="iconbtn" type="button" title="Back" aria-label="Back" disabled>←</button><button id="forward" class="iconbtn" type="button" title="Forward" aria-label="Forward" disabled>→</button><button id="reload" class="iconbtn" type="button" title="Reload" aria-label="Reload" disabled>↻</button><input id="address" class="address" type="url" placeholder="https://example.com" aria-label="Page URL"><button id="go" class="action" type="submit">Open page</button><button id="fullscreen" class="action secondary" type="button" title="Fullscreen page widget" aria-label="Fullscreen page widget" disabled>⛶</button></form>
-        <div id="viewport" class="viewport" tabindex="0" role="application" aria-label="Rendered page. Click, scroll, or focus and use the keyboard to interact."><div class="empty"><div class="empty-icon">⌁</div><h2>Start an isolated Servo session</h2><p>Load the embedded sample to verify the real WASM engine, then navigate to public pages. The compressed 21 MB module is compiled on first start.</p><div class="loading" id="worker-state"><i class="indicator"></i><span>Initializing browser host…</span></div><button id="sample" class="action sample" type="button">Run embedded sample</button> <button id="media-sample" class="action secondary" type="button">Play media sample</button></div></div>
+        <div id="viewport" class="viewport" tabindex="0" role="application" aria-label="Rendered page. Click, scroll, or focus and use the keyboard to interact."><div class="empty"><div class="empty-icon">⌁</div><h2>Start an isolated Servo session</h2><p>Load the embedded sample to verify the real WASM engine, then navigate to public pages. The compressed 15.3 MB module is compiled on first start.</p><div class="loading" id="worker-state"><i class="indicator"></i><span>Initializing browser host…</span></div><button id="sample" class="action sample" type="button">Run embedded sample</button> <button id="media-sample" class="action secondary" type="button">Play media sample</button></div></div>
         <div class="below"><div id="status" class="statusline" role="status" aria-live="polite">Worker host starting.</div><div id="sid" class="sid">NO SESSION</div></div>
         <div id="details" class="details"><h2>Page inspection</h2><pre id="page-data"></pre></div><pre id="log" class="log" aria-label="Servo runtime log"></pre>
       </div>
@@ -29,14 +29,14 @@
     </section>
     <aside>
       <section class="sidepanel"><div class="side-title"><span>WebMCP tool registry</span><span id="tool-pill" class="pill">waiting</span></div><p id="tool-copy" class="sidecopy">When the browser provides <code>document.modelContext</code>, the Servo tools register directly with that page-scoped native API. No remote MCP relay is involved.</p><ul class="tools" id="tool-list"><li>Waiting for browser host…</li></ul></section>
-      <section class="sidepanel"><div class="side-title"><span>Runtime</span><span class="pill">LOCAL TO THIS TAB</span></div><div class="runtimefacts"><div class="fact"><span>Engine</span><b>Servo WASM</b></div><div class="fact"><span>Worker adapter</span><b>Project source</b></div><div class="fact"><span>Parallel sessions</span><b>Up to 3</b></div><div class="fact"><span>Session storage</span><b>In memory</b></div><div class="fact"><span>Network</span><b>Cloudflare Worker fetch</b></div></div></section>
-      <div class="notice"><b>Network access:</b> Servo's host fetch runs in this Site's server Worker, so the browser's CORS gate does not block WASM network requests. Servo still applies its own page security rules. Requests are limited to public HTTP(S) destinations, with size and rate limits. This page does not provide a remote <code>/mcp</code> HTTP transport.</div>
+      <section class="sidepanel"><div class="side-title"><span>Runtime</span><span class="pill">LOCAL TO THIS TAB</span></div><div class="runtimefacts"><div class="fact"><span>Engine</span><b>Servo WASM</b></div><div class="fact"><span>Worker adapter</span><b>Project source</b></div><div class="fact"><span>Parallel sessions</span><b>No app-level cap</b></div><div class="fact"><span>Session storage</span><b>In memory</b></div><div class="fact"><span>Network</span><b>Cloudflare Worker fetch</b></div></div></section>
+      <div class="notice"><b>Network access:</b> Servo's host fetch runs in this Site's server Worker, so the browser's CORS gate does not block WASM network requests. Servo still applies its own page security rules, and this public service only fetches public HTTP(S) destinations. Hosting-provider quotas still apply. This page does not provide a remote <code>/mcp</code> HTTP transport.</div>
     </aside>
   </main>
   <footer class="shell"><span>Servo Rust engine · Worker ABI adapter · WebMCP page tools · <a href="/LICENSE.SITE">Site and harness MIT license</a> · <a href="/LICENSE.SERVO">Servo license</a> · <a href="/LICENSE.SERVO-MCP">Servo MCP source license</a> · <a href="/LICENSE.NOTOFONTS">Font notice</a> · <a href="/LICENSE.MEDIABUNNY">Mediabunny MPL-2.0 license</a></span><span>WASM runs on your device.</span></footer>
   <script type="module">
     const $ = (selector) => document.querySelector(selector);
-    const worker = new Worker(new URL('./engine-worker.83da0dd00810d573fa6f7ef392aef1d2a5c2badb3e0a0ed3d3ceb682b74e140c.js', import.meta.url), { type: 'module', name: 'servo-wasm-runtime' });
+    const worker = new Worker(new URL('./engine-worker.467c15ae4e8bbeb7b76f56cafd364dd5ce0a60cfaf80e808dd6fa44b33ace01b.js', import.meta.url), { type: 'module', name: 'servo-wasm-runtime' });
     const pending = new Map();
     let nextId = 1;
     let currentSession = null;
@@ -44,6 +44,8 @@
     let audioContext = null;
     let mediaCaptureTimer = null;
     let captureBusy = false;
+    let liveFrameUrl = null;
+    const liveFrameUrls = new Set();
     const mediaStates = new Map();
     const prerollCaptures = new Set();
     const audioSources = new Map();
@@ -60,13 +62,13 @@
     }
     function showPage(page) {
       if (!page) return;
-      const details = { url: page.url, title: page.title, text: page.text };
+      const details = { url: page.url, title: page.title, readyState: page.readyState, text: page.text };
       $('#address').value = page.url.startsWith('https://servo-inline.invalid') ? '' : page.url;
       $('#page-data').textContent = JSON.stringify(details, null, 2);
       $('#details').style.display = 'block';
       const viewport = $('#viewport');
       const image = viewport.querySelector('img.screen');
-      if (!image) viewport.innerHTML = '<div class="empty"><div class="loading"><i class="spinner"></i><span>Page ready · capture a frame to display it</span></div></div>';
+      if (!image) viewport.innerHTML = '<div class="empty"><div class="loading"><i class="spinner"></i><span>Waiting for Servo’s next rendered frame</span></div></div>';
     }
     function showScreenshot(result, quiet = false) {
       const item = result?.results?.[0];
@@ -77,8 +79,41 @@
       const image = document.createElement('img');
       image.className = 'screen'; image.alt = 'Screenshot rendered by Servo WebAssembly';
       image.src = `data:image/png;base64,${item.result.pngBase64}`;
+      for (const url of liveFrameUrls) URL.revokeObjectURL(url);
+      liveFrameUrls.clear();
+      liveFrameUrl = null;
       $('#viewport').replaceChildren(image);
       if (!quiet) setStatus('Frame rendered by Servo WebAssembly.');
+    }
+    function showLiveFrame(png) {
+      if (!currentSession || !png) return;
+      const viewport = $('#viewport');
+      let image = viewport.querySelector('img.screen');
+      if (!image) {
+        image = document.createElement('img');
+        image.className = 'screen';
+        image.alt = 'Live page frame rendered by Servo WebAssembly';
+        viewport.replaceChildren(image);
+      }
+      const nextUrl = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
+      liveFrameUrl = nextUrl;
+      liveFrameUrls.add(nextUrl);
+      image.onload = () => {
+        for (const url of liveFrameUrls) {
+          if (url !== liveFrameUrl) {
+            URL.revokeObjectURL(url);
+            liveFrameUrls.delete(url);
+          }
+        }
+        image.onload = null;
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(nextUrl);
+        liveFrameUrls.delete(nextUrl);
+        image.onerror = null;
+      };
+      image.src = nextUrl;
+      setStatus('Live frame updated · Servo WebAssembly.');
     }
     async function enableAudioOutput() {
       const AudioContextImpl = window.AudioContext || window.webkitAudioContext;
@@ -167,7 +202,10 @@
         currentSession = created.sessionId;
         if ([...mediaStates.values()].some((state) => state.sessionId === currentSession && state.playing && state.hasVideo)) startMediaCapture();
         $('#sid').textContent = currentSession;
-        setStatus('Servo session ready. Capturing the first frame…');
+        showPage(created.page);
+        setStatus(created.navigationPending
+          ? 'Page loading · live frames update as content arrives.'
+          : 'Servo session ready. Capturing the first frame…');
         $('#engine-state').textContent = 'ENGINE · RUNNING';
         enableControls(true);
         await capture();
@@ -179,7 +217,15 @@
     function enableControls(enabled) { for (const id of ['back','forward','reload','capture','inspect','close','fullscreen']) $(`#${id}`).disabled = !enabled; }
     async function navigate(url) {
       if (!currentSession) return startSession({ url });
-      try { setStatus('Servo navigating…'); const result = await call('servo_navigate', { sessions: [{ sessionId: currentSession, url }] }); showPage(first(result).page); await capture(); }
+      try {
+        setStatus('Servo navigating…');
+        const navigation = first(await call('servo_navigate', { sessions: [{ sessionId: currentSession, url }] }));
+        showPage(navigation.page);
+        await capture(true);
+        setStatus(navigation.navigationPending
+          ? 'Page loading · live frames update as content arrives.'
+          : 'Page ready · live frame updates enabled.');
+      }
       catch (error) { setStatus(error.message || String(error), true); }
     }
     async function capture(quiet = false) {
@@ -187,7 +233,11 @@
       if (captureBusy) return;
       captureBusy = true;
       try { const result = await call('servo_screenshot', { sessions: [{ sessionId: currentSession }] }); showScreenshot(result, quiet); }
-      catch (error) { setStatus(error.message || String(error), true); }
+      catch (error) {
+        const message = error.message || String(error);
+        if (message.includes('first rendered frame') || message.includes('could not start the PNG stream')) setStatus('Waiting for Servo’s first rendered frame.');
+        else setStatus(message, true);
+      }
       finally { captureBusy = false; }
     }
     $('#sample').addEventListener('click', () => startSession({ html: '<!doctype html><html><head><meta charset="utf-8"><title>Servo is running</title><style>body{font:16px system-ui;background:#101711;color:#e8eee5;padding:9vw}main{max-width:640px}small{font:11px ui-monospace;color:#c8ed88;letter-spacing:.16em}h1{font-size:clamp(34px,6vw,68px);letter-spacing:-.06em;line-height:1.02;margin:22px 0}p{color:#aab5a9;line-height:1.7}code{color:#c8ed88}</style></head><body><main><small>SERVO · WASM RUNTIME</small><h1>This page was rendered by Servo.</h1><p>The Rust browser engine is running as WebAssembly inside a dedicated worker. Its page tools are available through this site’s WebMCP registry.</p><p><code>servo_session_create → servo_screenshot</code></p></main></body></html>' }));
@@ -263,9 +313,10 @@
     });
     $('#capture').addEventListener('click', capture);
     $('#inspect').addEventListener('click', async () => { try { showPage(first(await call('servo_inspect', { sessions: [{ sessionId: currentSession }] }))); setStatus('Page inspection updated.'); } catch (error) { setStatus(error.message, true); } });
-    $('#close').addEventListener('click', async () => { const closedSession = currentSession; try { first(await call('servo_session_close', { sessionIds: [closedSession] })); clearSessionMedia(closedSession); currentSession = null; $('#sid').textContent = 'NO SESSION'; $('#viewport').innerHTML = '<div class="empty"><div class="empty-icon">⌁</div><h2>Servo session closed</h2><p>The runtime was released. Start another session when ready.</p><button class="action" onclick="document.querySelector(\'#sample\').click()">Run embedded sample</button></div>'; enableControls(false); $('#engine-state').textContent = 'ENGINE · MODULE CACHED'; setStatus('Session closed.'); } catch (error) { setStatus(error.message, true); } });
+    $('#close').addEventListener('click', async () => { const closedSession = currentSession; try { first(await call('servo_session_close', { sessionIds: [closedSession] })); clearSessionMedia(closedSession); currentSession = null; for (const url of liveFrameUrls) URL.revokeObjectURL(url); liveFrameUrls.clear(); liveFrameUrl = null; $('#sid').textContent = 'NO SESSION'; $('#viewport').innerHTML = '<div class="empty"><div class="empty-icon">⌁</div><h2>Servo session closed</h2><p>The runtime was released. Start another session when ready.</p><button class="action" onclick="document.querySelector(\'#sample\').click()">Run embedded sample</button></div>'; enableControls(false); $('#engine-state').textContent = 'ENGINE · MODULE CACHED'; setStatus('Session closed.'); } catch (error) { setStatus(error.message, true); } });
     worker.onmessage = async ({ data }) => {
       if (data.type === 'result' || data.type === 'error') { const request = pending.get(data.id); if (!request) return; pending.delete(data.id); data.type === 'error' ? request.reject(new Error(data.error)) : request.resolve(data.result); return; }
+      if (data.type === 'frame') { if (data.sessionId === currentSession) showLiveFrame(data.png); return; }
       if (data.type === 'log') { $('#log').style.display = 'block'; $('#log').textContent = (data.text + '\n' + $('#log').textContent).slice(0, 6000); }
       if (data.type === 'media-audio') { playAudioChunk(data); return; }
       if (data.type === 'media-state') {
